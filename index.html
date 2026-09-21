@@ -8,6 +8,13 @@
   html, body { margin: 0; padding: 0; background: #F7EFE3; }
   #root { min-height: 100vh; }
 </style>
+<script
+  async
+  crossorigin="anonymous"
+  data-clerk-publishable-key="pk_test_cG9wdWxhci1sZW11ci0zNTk1LmNsZXJrLmFjY291bnRzLmRldiQ"
+  src="https://popular-lemur-3595.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+  type="text/javascript"
+></script>
 </head>
 <body>
 <div id="root"></div>
@@ -21685,14 +21692,36 @@ function fileToCompressedImage(file, maxDim = 1500, quality = 0.82) {
   });
 }
 const API_ENDPOINT = "https://studiochiaro.adrianotutordsa.workers.dev/";
+function waitForClerk() {
+  return new Promise((resolve) => {
+    function check() {
+      if (window.Clerk) {
+        window.Clerk.load().then(() => resolve(window.Clerk));
+      } else {
+        setTimeout(check, 50);
+      }
+    }
+    check();
+  });
+}
+async function getClerkToken() {
+  try {
+    if (window.Clerk && window.Clerk.session) {
+      return await window.Clerk.session.getToken();
+    }
+  } catch {
+  }
+  return null;
+}
 async function callClaude({ system, userText, image, maxTokens = 1500, modelTier = "default" }) {
   const body = { system, userText, maxTokens, modelTier };
   if (image) {
     body.image = { base64: image.base64, mediaType: image.mediaType };
   }
+  const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify(body)
   });
   if (!res.ok) {
@@ -21709,9 +21738,10 @@ async function callClaude({ system, userText, image, maxTokens = 1500, modelTier
   return (data.text || "").trim();
 }
 async function callClaudeChat({ system, messages, maxTokens = 700, modelTier = "default" }) {
+  const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify({ system, messages, maxTokens, modelTier, chat: true })
   });
   if (!res.ok) {
@@ -21803,9 +21833,10 @@ async function saveTopicCache(cache) {
 }
 async function sharedCacheGet(key) {
   try {
+    const token = await getClerkToken();
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_get", key })
     });
     if (!res.ok) return null;
@@ -21817,9 +21848,10 @@ async function sharedCacheGet(key) {
 }
 async function sharedCacheSet(key, value) {
   try {
+    const token = await getClerkToken();
     await fetch(API_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_set", key, value })
     });
   } catch {
@@ -22545,7 +22577,24 @@ function Sidebar({ active, onSelect, fontScale, setFontScale, collapsed, setColl
         "aria-label": "Testo pi\xF9 grande"
       },
       /* @__PURE__ */ React.createElement(Plus, { size: 14, color: C.ink })
-    ))
+    )),
+    !collapsed && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => window.Clerk && window.Clerk.signOut(),
+        style: {
+          background: "none",
+          border: "none",
+          padding: "10px 16px 16px",
+          cursor: "pointer",
+          color: C.inkSoft,
+          fontFamily: FONT,
+          fontSize: "0.85em",
+          textAlign: "center"
+        }
+      },
+      "Esci"
+    )
   );
 }
 function PageHeader({ title, subtitle }) {
@@ -24584,6 +24633,9 @@ function App() {
       return true;
     }
   });
+  const [clerkReady, setClerkReady] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const signInBoxRef = useRef(null);
   const handleEnter = () => {
     try {
       window.localStorage.setItem("chiarostudio-entrato", "1");
@@ -24591,6 +24643,31 @@ function App() {
     }
     setShowLanding(false);
   };
+  useEffect(() => {
+    let alive = true;
+    waitForClerk().then((clerk) => {
+      if (!alive) return;
+      setClerkReady(true);
+      setIsSignedIn(!!clerk.user);
+      clerk.addListener(({ user }) => {
+        setIsSignedIn(!!user);
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (clerkReady && !isSignedIn && signInBoxRef.current) {
+      window.Clerk.mountSignIn(signInBoxRef.current);
+      return () => {
+        try {
+          window.Clerk.unmountSignIn(signInBoxRef.current);
+        } catch {
+        }
+      };
+    }
+  }, [clerkReady, isSignedIn]);
   useEffect(() => {
     let alive = true;
     loadArchivio().then((items) => {
@@ -24616,6 +24693,43 @@ function App() {
   };
   if (showLanding) {
     return /* @__PURE__ */ React.createElement(LandingPage, { onEnter: handleEnter });
+  }
+  if (!clerkReady) {
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: C.paper,
+          fontFamily: FONT,
+          color: C.inkSoft
+        }
+      },
+      "Caricamento\u2026"
+    );
+  }
+  if (!isSignedIn) {
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 18,
+          background: C.paper,
+          fontFamily: FONT,
+          padding: 20
+        }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.3em", color: C.ink } }, "Chiarostudio"),
+      /* @__PURE__ */ React.createElement("div", { ref: signInBoxRef })
+    );
   }
   let content;
   if (active === "home") {
