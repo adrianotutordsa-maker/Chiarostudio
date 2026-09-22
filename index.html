@@ -8,6 +8,13 @@
   html, body { margin: 0; padding: 0; background: #F7EFE3; }
   #root { min-height: 100vh; }
 </style>
+<script
+  async
+  crossorigin="anonymous"
+  data-clerk-publishable-key="pk_test_cG9wdWxhci1sZW11ci0zNTk1LmNsZXJrLmFjY291bnRzLmRldiQ"
+  src="https://popular-lemur-3595.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+  type="text/javascript"
+></script>
 </head>
 <body>
 <div id="root"></div>
@@ -21685,14 +21692,39 @@ function fileToCompressedImage(file, maxDim = 1500, quality = 0.82) {
   });
 }
 const API_ENDPOINT = "https://studiochiaro.adrianotutordsa.workers.dev/";
+function waitForClerk() {
+  return new Promise((resolve, reject) => {
+    const scadenza = Date.now() + 1e4;
+    function check() {
+      if (window.Clerk) {
+        window.Clerk.load().then(() => resolve(window.Clerk)).catch(() => reject(new Error("clerk_load_error")));
+      } else if (Date.now() > scadenza) {
+        reject(new Error("clerk_timeout"));
+      } else {
+        setTimeout(check, 50);
+      }
+    }
+    check();
+  });
+}
+async function getClerkToken() {
+  try {
+    if (window.Clerk && window.Clerk.session) {
+      return await window.Clerk.session.getToken();
+    }
+  } catch {
+  }
+  return null;
+}
 async function callClaude({ system, userText, image, maxTokens = 1500, modelTier = "default" }) {
   const body = { system, userText, maxTokens, modelTier };
   if (image) {
     body.image = { base64: image.base64, mediaType: image.mediaType };
   }
+  const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify(body)
   });
   if (!res.ok) {
@@ -21709,9 +21741,10 @@ async function callClaude({ system, userText, image, maxTokens = 1500, modelTier
   return (data.text || "").trim();
 }
 async function callClaudeChat({ system, messages, maxTokens = 700, modelTier = "default" }) {
+  const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify({ system, messages, maxTokens, modelTier, chat: true })
   });
   if (!res.ok) {
@@ -21803,9 +21836,10 @@ async function saveTopicCache(cache) {
 }
 async function sharedCacheGet(key) {
   try {
+    const token = await getClerkToken();
     const res = await fetch(API_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_get", key })
     });
     if (!res.ok) return null;
@@ -21817,9 +21851,10 @@ async function sharedCacheGet(key) {
 }
 async function sharedCacheSet(key, value) {
   try {
+    const token = await getClerkToken();
     await fetch(API_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_set", key, value })
     });
   } catch {
@@ -22545,7 +22580,24 @@ function Sidebar({ active, onSelect, fontScale, setFontScale, collapsed, setColl
         "aria-label": "Testo pi\xF9 grande"
       },
       /* @__PURE__ */ React.createElement(Plus, { size: 14, color: C.ink })
-    ))
+    )),
+    !collapsed && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => window.Clerk && window.Clerk.signOut(),
+        style: {
+          background: "none",
+          border: "none",
+          padding: "10px 16px 16px",
+          cursor: "pointer",
+          color: C.inkSoft,
+          fontFamily: FONT,
+          fontSize: "0.85em",
+          textAlign: "center"
+        }
+      },
+      "Esci"
+    )
   );
 }
 function PageHeader({ title, subtitle }) {
@@ -22988,21 +23040,80 @@ Spiega il termine: "${term}"`,
   }
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle }), error && /* @__PURE__ */ React.createElement(ErrorBanner, { text: error }), /* @__PURE__ */ React.createElement(ImagePicker, { image, onPick: handlePick, onClear: () => setImage(null) }), /* @__PURE__ */ React.createElement("div", { style: { position: "relative", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("textarea", { value: text, onChange: (e) => setText(e.target.value), placeholder, rows: 5, style: textAreaStyle }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 10, right: 10 } }, /* @__PURE__ */ React.createElement(DictateButton, { onResult: (r) => setText((t) => t ? t + " " + r : r), color }))), /* @__PURE__ */ React.createElement(PrimaryButton, { onClick: generate, disabled: !canGenerate || status === "loading", color, Icon: status === "loading" ? Loader2 : Sparkles }, status === "loading" ? "Genero\u2026" : "Genera"));
 }
+function parseDizionarioJson(raw) {
+  try {
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      voce: String(parsed.voce || "").trim() || raw,
+      alternative: Array.isArray(parsed.alternative) ? parsed.alternative.map((a) => ({ forma: String(a.forma || "").trim(), info: String(a.info || "").trim() })).filter((a) => a.forma) : []
+    };
+  } catch {
+    return { voce: raw, alternative: [] };
+  }
+}
 function DizionarioWebScreen({ onSave }) {
   const [lingua, setLingua] = useState("Latino");
   const [word, setWord] = useState("");
   const [status, setStatus] = useState("input");
-  const [result, setResult] = useState("");
+  const [voce, setVoce] = useState("");
+  const [alternative, setAlternative] = useState([]);
   const [error, setError] = useState("");
-  const generate = async () => {
-    if (!word.trim()) return;
-    setStatus("loading");
+  const [cacheSource, setCacheSource] = useState(null);
+  const [topicCache, setTopicCache] = useState({});
+  useEffect(() => {
+    let alive = true;
+    loadTopicCache().then((c) => {
+      if (alive) setTopicCache(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const generate = async (parolaCercata) => {
+    const termine = (parolaCercata !== void 0 ? parolaCercata : word).trim();
+    if (!termine) return;
+    setWord(termine);
     setError("");
-    try {
-      const system = `Sei un dizionario di ${lingua.toLowerCase()} per studenti con DSA. Analizza il termine fornito, che pu\xF2 essere in ${lingua.toLowerCase()} (anche in una forma flessa) oppure in italiano. Fornisci una voce di dizionario chiara: il lemma con le informazioni standard, il significato in italiano, e se era una forma flessa spiega di che forma si tratta. Usa '## ' per le sezioni ed evidenzia con **doppio asterisco** i termini chiave. Rispondi solo con la voce di dizionario.`;
-      const out = await callClaude({ system, userText: word.trim(), maxTokens: 900 });
-      setResult(out);
+    setCacheSource(null);
+    const cacheKey = `dizionario:${lingua}:${normalizeTopic(termine)}`;
+    if (topicCache[cacheKey]) {
+      const cached = topicCache[cacheKey];
+      setVoce(cached.voce);
+      setAlternative(cached.alternative || []);
+      setCacheSource("personal");
       setStatus("result");
+      return;
+    }
+    setStatus("loading");
+    const sharedValue = await sharedCacheGet(cacheKey);
+    if (sharedValue) {
+      try {
+        const parsed = JSON.parse(sharedValue);
+        setVoce(parsed.voce);
+        setAlternative(parsed.alternative || []);
+        setCacheSource("condivisa");
+        setStatus("result");
+        const nextPersonal = { ...topicCache, [cacheKey]: parsed };
+        setTopicCache(nextPersonal);
+        saveTopicCache(nextPersonal);
+        return;
+      } catch {
+      }
+    }
+    try {
+      const system = `Sei un dizionario di ${lingua.toLowerCase()} per studenti con DSA. Analizza il termine fornito, che pu\xF2 essere in ${lingua.toLowerCase()} (anche in una forma flessa) oppure in italiano. Rispondi SOLO con un oggetto JSON valido, senza testo intorno e senza backtick, in questo formato: {"voce": "...", "alternative": [...]}.
+Nel campo "voce" scrivi la voce di dizionario pi\xF9 probabile: il lemma con le informazioni standard, il significato in italiano, e se era una forma flessa spiega di che forma si tratta. Usa '## ' per le sezioni ed evidenzia con **doppio asterisco** i termini chiave, dentro la stringa.
+Nel campo "alternative" (array, pu\xF2 essere vuoto) elenca SOLO se la forma scritta \xE8 davvero ambigua tra lemmi o casi diversi (es. una forma che potrebbe essere sia genitivo singolare che nominativo plurale di parole diverse): un oggetto per ogni alternativa reale, con "forma" (il lemma o la forma alternativa, breve) e "info" (2-6 parole che distinguono questa alternativa, es. "genitivo singolare" oppure "verbo, non sostantivo"). Se non c'\xE8 vera ambiguit\xE0, lascia l'array vuoto: non inventare alternative solo per riempirlo.`;
+      const out = await callClaude({ system, userText: termine, maxTokens: 900 });
+      const parsed = parseDizionarioJson(out);
+      setVoce(parsed.voce);
+      setAlternative(parsed.alternative);
+      setStatus("result");
+      const nextPersonal = { ...topicCache, [cacheKey]: parsed };
+      setTopicCache(nextPersonal);
+      saveTopicCache(nextPersonal);
+      sharedCacheSet(cacheKey, JSON.stringify(parsed));
     } catch (e) {
       setError(e.message || "Qualcosa non ha funzionato. Riprova.");
       setStatus("input");
@@ -23025,18 +23136,73 @@ function DizionarioWebScreen({ onSave }) {
       placeholder: 'Es. rosam, oppure "rosa"',
       style: inputLikeStyle({ paddingRight: 46 })
     }
-  ), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 4, right: 4 } }, /* @__PURE__ */ React.createElement(DictateButton, { onResult: (r) => setWord(r), color: C.wine, size: 34 }))), /* @__PURE__ */ React.createElement(PrimaryButton, { onClick: generate, disabled: !word.trim() || status === "loading", color: C.wine, Icon: status === "loading" ? Loader2 : Sparkles }, status === "loading" ? "Cerco\u2026" : "Cerca nel dizionario"), status === "result" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } }, /* @__PURE__ */ React.createElement(SpeakButton, { text: result, color: C.wine }), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 4, right: 4 } }, /* @__PURE__ */ React.createElement(DictateButton, { onResult: (r) => setWord(r), color: C.wine, size: 34 }))), /* @__PURE__ */ React.createElement(PrimaryButton, { onClick: () => generate(), disabled: !word.trim() || status === "loading", color: C.wine, Icon: status === "loading" ? Loader2 : Sparkles }, status === "loading" ? "Cerco\u2026" : "Cerca nel dizionario"), status === "result" && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } }, /* @__PURE__ */ React.createElement(SpeakButton, { text: voce, color: C.wine }), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => onSave({ type: "dizionario", title: `${lingua} \u2014 ${titleFromText(result, word)}`, content: result, materia: lingua }),
+      onClick: () => onSave({ type: "dizionario", title: `${lingua} \u2014 ${titleFromText(voce, word)}`, content: voce, materia: lingua }),
       style: secondaryBtnStyle
     },
     /* @__PURE__ */ React.createElement(Save, { size: 16 }),
     " Salva"
-  )), /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: result }))));
+  )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 cercata da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: alternative.length > 0 ? 16 : 0 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: voce })), alternative.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8, fontSize: "calc(0.9em * var(--fs))" } }, "Questa forma potrebbe anche essere:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, alternative.map((a, i) => /* @__PURE__ */ React.createElement("button", { key: i, onClick: () => generate(a.forma), style: { ...secondaryBtnStyle, flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "8px 13px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, a.forma), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "calc(0.82em * var(--fs))", color: C.inkSoft, fontWeight: 400 } }, a.info)))))));
+}
+function ArchivioViewerModal({ item, onClose }) {
+  let parsed = null;
+  if (item.type === "mappa" || item.type === "flashcard" || item.type === "quiz") {
+    try {
+      parsed = JSON.parse(item.content);
+    } catch {
+      parsed = null;
+    }
+  }
+  const overlayStyle = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(46, 43, 39, 0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    zIndex: 1e3
+  };
+  const boxStyle = {
+    background: C.paper,
+    borderRadius: 18,
+    padding: 26,
+    maxWidth: 760,
+    width: "100%",
+    maxHeight: "85vh",
+    overflowY: "auto",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.25)"
+  };
+  let body;
+  if (item.type === "mappa" && parsed) {
+    body = /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(MappaWebScreen, { embedded: true, initialData: parsed, onSave: () => {
+    } }));
+  } else if (item.type === "flashcard" && Array.isArray(parsed)) {
+    body = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, parsed.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6 } }, c.fronte), /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft } }, c.retro))));
+  } else if (item.type === "quiz" && parsed && Array.isArray(parsed.questions)) {
+    const { questions, graded } = parsed;
+    body = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, questions.map((q, i) => {
+      const g = graded && graded[i];
+      let riferimento;
+      if (q.tipo === "multipla") riferimento = q.opzioni[q.corretta];
+      else if (q.tipo === "vero_falso") riferimento = q.corretta ? "Vero" : "Falso";
+      else if (q.tipo === "abbinamento") riferimento = q.coppie.map((c) => `${c.sinistra} \u2192 ${c.destra}`).join("; ");
+      else riferimento = q.rispostaAttesa || "";
+      return /* @__PURE__ */ React.createElement("div", { key: i, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 } }, g && g.corretta === true && /* @__PURE__ */ React.createElement(Check, { size: 16, color: C.moss, style: { flexShrink: 0, marginTop: 3 } }), g && g.corretta === false && /* @__PURE__ */ React.createElement(X, { size: 16, color: C.wine, style: { flexShrink: 0, marginTop: 3 } }), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink } }, q.domanda)), /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft, fontSize: "calc(0.9em * var(--fs))" } }, "Risposta corretta: ", riferimento));
+    }));
+  } else if (item.type === "formulario") {
+    const { text: cleanText, svg } = extractDiagram(item.content);
+    body = /* @__PURE__ */ React.createElement("div", null, svg && /* @__PURE__ */ React.createElement("div", { style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 16 }, dangerouslySetInnerHTML: { __html: svg } }), /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: cleanText, interactive: false })));
+  } else {
+    body = /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: item.content, interactive: false }));
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: overlayStyle, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: boxStyle, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "calc(1.2em * var(--fs))", color: C.ink } }, item.title), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { ...iconButtonStyle, flexShrink: 0 }, "aria-label": "Chiudi" }, /* @__PURE__ */ React.createElement(X, { size: 18, color: C.ink }))), body));
 }
 function ArchivioWebScreen({ items, onDelete }) {
   const [filtro, setFiltro] = useState("tutti");
+  const [viewing, setViewing] = useState(null);
   const tipi = ["tutti", ...Array.from(new Set(items.map((i) => i.type)))];
   const filtrati = filtro === "tutti" ? items : items.filter((i) => i.type === filtro);
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 900 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Archivio", subtitle: `${items.length} materiali salvati.` }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" } }, tipi.map((t) => /* @__PURE__ */ React.createElement(
@@ -23047,7 +23213,15 @@ function ArchivioWebScreen({ items, onDelete }) {
       style: { ...secondaryBtnStyle, background: filtro === t ? C.ink : C.card, color: filtro === t ? "#FBFAF4" : C.ink, borderColor: filtro === t ? C.ink : C.border, textTransform: "capitalize" }
     },
     t
-  ))), filtrati.length === 0 ? /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft } }, "Niente qui per ora.") : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 } }, filtrati.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6, fontSize: "calc(0.95em * var(--fs))" } }, item.title), /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", marginBottom: 10, textTransform: "capitalize" } }, item.type), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina")))));
+  ))), filtrati.length === 0 ? /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft } }, "Niente qui per ora.") : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 } }, filtrati.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 } }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setViewing(item),
+      style: { background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", width: "100%", display: "block", marginBottom: 10 }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6, fontSize: "calc(0.95em * var(--fs))" } }, item.title),
+    /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", textTransform: "capitalize" } }, item.type)
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setViewing(item), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, "Apri"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina"))))), viewing && /* @__PURE__ */ React.createElement(ArchivioViewerModal, { item: viewing, onClose: () => setViewing(null) }));
 }
 function parseFlashcardJson(raw) {
   const cleaned = raw.replace(/```json|```/g, "").trim();
@@ -24584,6 +24758,11 @@ function App() {
       return true;
     }
   });
+  const [clerkReady, setClerkReady] = useState(false);
+  const [clerkError, setClerkError] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const signInBoxRef = useRef(null);
   const handleEnter = () => {
     try {
       window.localStorage.setItem("chiarostudio-entrato", "1");
@@ -24591,6 +24770,35 @@ function App() {
     }
     setShowLanding(false);
   };
+  useEffect(() => {
+    let alive = true;
+    setClerkError(false);
+    waitForClerk().then((clerk) => {
+      if (!alive) return;
+      setClerkReady(true);
+      setIsSignedIn(!!clerk.user && !!clerk.session);
+      clerk.addListener(({ user, session }) => {
+        setIsSignedIn(!!user && !!session);
+      });
+    }).catch(() => {
+      if (!alive) return;
+      setClerkError(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [retryCount]);
+  useEffect(() => {
+    if (!showLanding && clerkReady && !isSignedIn && signInBoxRef.current) {
+      window.Clerk.mountSignIn(signInBoxRef.current);
+      return () => {
+        try {
+          window.Clerk.unmountSignIn(signInBoxRef.current);
+        } catch {
+        }
+      };
+    }
+  }, [showLanding, clerkReady, isSignedIn]);
   useEffect(() => {
     let alive = true;
     loadArchivio().then((items) => {
@@ -24616,6 +24824,47 @@ function App() {
   };
   if (showLanding) {
     return /* @__PURE__ */ React.createElement(LandingPage, { onEnter: handleEnter });
+  }
+  if (!clerkReady) {
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 14,
+          background: C.paper,
+          fontFamily: FONT,
+          color: C.inkSoft,
+          padding: 20,
+          textAlign: "center"
+        }
+      },
+      clerkError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { maxWidth: 360 } }, "Non riesco a caricare l'accesso. Controlla la connessione e riprova."), /* @__PURE__ */ React.createElement("button", { onClick: () => setRetryCount((c) => c + 1), style: { ...secondaryBtnStyle, background: C.card } }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }), " Riprova")) : "Caricamento\u2026"
+    );
+  }
+  if (!isSignedIn) {
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 18,
+          background: C.paper,
+          fontFamily: FONT,
+          padding: 20
+        }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.3em", color: C.ink } }, "Chiarostudio"),
+      /* @__PURE__ */ React.createElement("div", { ref: signInBoxRef })
+    );
   }
   let content;
   if (active === "home") {
