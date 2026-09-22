@@ -22889,6 +22889,7 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
   const [topicCache, setTopicCache] = useState({});
   const [cacheSource, setCacheSource] = useState(null);
   const [showMapSplit, setShowMapSplit] = useState(false);
+  const [startLineIndex, setStartLineIndex] = useState(null);
   useEffect(() => {
     let alive = true;
     loadTopicCache().then((c) => {
@@ -22929,6 +22930,7 @@ Spiega il termine: "${term}"`,
     setOpenTerms({});
     setExplanations({});
     setCacheSource(null);
+    setStartLineIndex(null);
     const trimmed = text.trim();
     const cacheKey = !image && trimmed && trimmed.length <= 60 ? `${sectionId}:${normalizeTopic(trimmed)}` : null;
     if (cacheKey && topicCache[cacheKey]) {
@@ -22985,7 +22987,15 @@ Spiega il termine: "${term}"`,
   };
   if (status === "result") {
     const mapTopic = titleFromText(result, text.trim() || "Argomento");
-    return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: showMapSplit ? "none" : 760 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle: titleFromText(result, "") }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(SpeakButton, { text: result, color }), /* @__PURE__ */ React.createElement(
+    const puoiSelezionare = sectionId !== "formulario";
+    return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: showMapSplit ? "none" : 760 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle: titleFromText(result, "") }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+      SpeakButton,
+      {
+        text: startLineIndex !== null ? splitLines(result).slice(startLineIndex).join("\n") : result,
+        color,
+        label: startLineIndex !== null ? "Ascolta da qui" : "Ascolta"
+      }
+    ), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onSave({ type: sectionId, title: `${title} \u2014 ${titleFromText(result, "senza titolo")}`, content: result, materia: "" }),
@@ -23007,7 +23017,7 @@ Spiega il termine: "${term}"`,
       /* @__PURE__ */ React.createElement(Network, { size: 16 }),
       " ",
       showMapSplit ? "Chiudi mappa" : "Mappa accanto"
-    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
+    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), puoiSelezionare && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", margin: "0 0 10px" } }, "Tocca un paragrafo per far partire la lettura da l\xEC."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "diagram-box",
@@ -23022,14 +23032,26 @@ Spiega il termine: "${term}"`,
         openTerms,
         explanations,
         onToggleTerm: toggleTerm,
-        accentColor: color
+        accentColor: color,
+        selectable: puoiSelezionare,
+        startIndex: startLineIndex,
+        onSelectStart: (idx) => setStartLineIndex((prev) => prev === idx ? null : idx)
       }
-    )), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      setStatus("input");
-      setResult("");
-      setDiagram(null);
-      setShowMapSplit(false);
-    }, style: secondaryBtnStyle }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }), " Nuova generazione")), showMapSplit && /* @__PURE__ */ React.createElement("div", { style: { flex: "1 1 420px", minWidth: 0, background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(
+    )), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          setStatus("input");
+          setResult("");
+          setDiagram(null);
+          setShowMapSplit(false);
+          setStartLineIndex(null);
+        },
+        style: secondaryBtnStyle
+      },
+      /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }),
+      " Nuova generazione"
+    )), showMapSplit && /* @__PURE__ */ React.createElement("div", { style: { flex: "1 1 420px", minWidth: 0, background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(
       MappaWebScreen,
       {
         embedded: true,
