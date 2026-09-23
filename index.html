@@ -22889,19 +22889,24 @@ function LandingPage({ onEnter }) {
     "Entra nell'app"
   ), /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "0.82em", marginTop: 34 } }, "Vai con calma \u2014 ogni passo conta."))));
 }
-function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, placeholder, onSave }) {
-  const [image, setImage] = useState(null);
-  const [text, setText] = useState("");
-  const [status, setStatus] = useState("input");
-  const [error, setError] = useState("");
-  const [result, setResult] = useState("");
-  const [diagram, setDiagram] = useState(null);
-  const [openTerms, setOpenTerms] = useState({});
-  const [explanations, setExplanations] = useState({});
+function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, placeholder, onSave, initialState, onStateChange }) {
+  const [image, setImage] = useState(initialState?.image ?? null);
+  const [text, setText] = useState(initialState?.text ?? "");
+  const [status, setStatus] = useState(initialState?.status ?? "input");
+  const [error, setError] = useState(initialState?.error ?? "");
+  const [result, setResult] = useState(initialState?.result ?? "");
+  const [diagram, setDiagram] = useState(initialState?.diagram ?? null);
+  const [openTerms, setOpenTerms] = useState(initialState?.openTerms ?? {});
+  const [explanations, setExplanations] = useState(initialState?.explanations ?? {});
   const [topicCache, setTopicCache] = useState({});
-  const [cacheSource, setCacheSource] = useState(null);
-  const [showMapSplit, setShowMapSplit] = useState(false);
-  const [startLineIndex, setStartLineIndex] = useState(null);
+  const [cacheSource, setCacheSource] = useState(initialState?.cacheSource ?? null);
+  const [showMapSplit, setShowMapSplit] = useState(initialState?.showMapSplit ?? false);
+  const [startLineIndex, setStartLineIndex] = useState(initialState?.startLineIndex ?? null);
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange({ image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex });
+    }
+  }, [image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex]);
   useEffect(() => {
     let alive = true;
     loadTopicCache().then((c) => {
@@ -24809,6 +24814,11 @@ function App() {
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const signInBoxRef = useRef(null);
+  const sectionStateRef = useRef({});
+  const getSectionState = (id) => sectionStateRef.current[id];
+  const setSectionState = (id, snapshot) => {
+    sectionStateRef.current[id] = snapshot;
+  };
   const handleEnter = () => {
     try {
       window.localStorage.setItem("chiarostudio-entrato", "1");
@@ -24929,7 +24939,9 @@ function App() {
         color: C.teal,
         systemPrompt: RIASSUNTO_SYSTEM,
         placeholder: "Es. La Rivoluzione francese, oppure incolla qui un testo",
-        onSave: addToArchivio
+        onSave: addToArchivio,
+        initialState: getSectionState("riassunto"),
+        onStateChange: (s) => setSectionState("riassunto", s)
       }
     );
   } else if (active === "facile") {
@@ -24943,7 +24955,9 @@ function App() {
         color: C.accent,
         systemPrompt: FACILE_SYSTEM,
         placeholder: "Incolla qui il testo da semplificare",
-        onSave: addToArchivio
+        onSave: addToArchivio,
+        initialState: getSectionState("facile"),
+        onStateChange: (s) => setSectionState("facile", s)
       }
     );
   } else if (active === "formulario") {
@@ -24957,7 +24971,9 @@ function App() {
         color: C.plum,
         systemPrompt: FORMULARIO_SYSTEM,
         placeholder: "Es. equazioni di secondo grado",
-        onSave: addToArchivio
+        onSave: addToArchivio,
+        initialState: getSectionState("formulario"),
+        onStateChange: (s) => setSectionState("formulario", s)
       }
     );
   } else if (active === "flashcard") {
