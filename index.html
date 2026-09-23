@@ -22998,7 +22998,7 @@ Spiega il termine: "${term}"`,
         system: systemPrompt,
         userText,
         image,
-        maxTokens: sectionId === "formulario" ? 2600 : 1800
+        maxTokens: sectionId === "formulario" ? 3400 : 1800
       });
       let cleanText = out;
       let svg = null;
@@ -24810,7 +24810,7 @@ function InterrogazioneScreen({ onSave }) {
 }
 const RIASSUNTO_SYSTEM = "Sei un assistente che scrive riassunti chiari per studenti con DSA, a partire da un argomento, un testo o una foto. Scrivi in prosa scorrevole, frasi brevi e dirette, evidenzia con **doppio asterisco** i 4-6 termini chiave pi\xF9 importanti. Usa '## ' per dividere in 2-4 sezioni tematiche se il contenuto lo giustifica. Rispondi solo con il riassunto.";
 const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 semplice per studenti con DSA, a partire da un argomento, un testo o una foto. Frasi corte, una idea per frase, parole comuni al posto di termini difficili quando possibile (spiega quelli tecnici indispensabili). Usa '## ' per dividere in sezioni brevi. Rispondi solo con il testo semplificato.";
-const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Elenca le formule rilevanti con "- " e una brevissima spiegazione di ogni simbolo. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", in frasi brevi e semplici, spiegando anche perch\xE9 si fa quel passaggio, non solo il calcolo. Rispondi solo con il formulario.';
+const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Questi studenti spesso fanno fatica a memorizzare i termini tecnici e a visualizzarli mentalmente: ogni volta che usi un termine tecnico (es. "discriminante", "disequazione", "coefficiente", "verso della disuguaglianza"), spiegalo subito con parole semplici e concrete, non darlo mai per scontato. Non avere fretta di essere breve: \xE8 molto meglio una frase in pi\xF9 che spiega bene, piuttosto che una definizione telegrafica che lo studente non riesce a seguire. Elenca le formule rilevanti con "- ", spiegando ogni simbolo in modo chiaro e comprensibile, con un esempio concreto se aiuta a capire. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", spiegando con calma, con parole semplici, cosa si fa e perch\xE9 \u2014 come se lo spiegassi a voce a uno studente che ha bisogno di tempo per capire, non come una lista di operazioni. Rispondi solo con il formulario.';
 function App() {
   const [active, setActive] = useState("home");
   const [collapsed, setCollapsed] = useState(() => {
