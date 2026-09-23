@@ -24836,7 +24836,10 @@ function App() {
   }, [retryCount]);
   useEffect(() => {
     if (!showLanding && clerkReady && !isSignedIn && signInBoxRef.current) {
-      window.Clerk.mountSignIn(signInBoxRef.current);
+      window.Clerk.mountSignIn(signInBoxRef.current, {
+        oauthFlow: "popup",
+        fallbackRedirectUrl: window.location.href
+      });
       return () => {
         try {
           window.Clerk.unmountSignIn(signInBoxRef.current);
@@ -24919,6 +24922,7 @@ function App() {
     content = /* @__PURE__ */ React.createElement(
       SimpleGenScreen,
       {
+        key: "riassunto",
         sectionId: "riassunto",
         title: "Riassunto",
         subtitle: "Da un argomento, un testo o una foto.",
@@ -24932,6 +24936,7 @@ function App() {
     content = /* @__PURE__ */ React.createElement(
       SimpleGenScreen,
       {
+        key: "facile",
         sectionId: "facile",
         title: "Testo facile",
         subtitle: "Frasi pi\xF9 corte, parole pi\xF9 semplici.",
@@ -24945,6 +24950,7 @@ function App() {
     content = /* @__PURE__ */ React.createElement(
       SimpleGenScreen,
       {
+        key: "formulario",
         sectionId: "formulario",
         title: "Formulario",
         subtitle: "Le formule di un argomento, spiegate chiaro.",
