@@ -21579,6 +21579,7 @@ const ChevronRight = makeIcon("\u203A");
 const ChevronLeft = makeIcon("\u2039");
 const Menu = makeIcon("\u2630");
 const Shuffle = makeIcon("\u{1F500}");
+const Lock = makeIcon("\u{1F512}");
 const C = {
   paper: "#F7EFE3",
   paperLine: "#EDE1CC",
@@ -22063,6 +22064,24 @@ async function saveVoicePref(uri) {
   } catch {
   }
 }
+const SPEECH_RATE_NORMAL = 0.95;
+const SPEECH_RATE_FAST = 1.5;
+const speedPref = { rate: SPEECH_RATE_NORMAL };
+async function loadSpeedPref() {
+  try {
+    const res = await window.storage.get("speedPref", false);
+    speedPref.rate = res && res.value ? JSON.parse(res.value).rate : SPEECH_RATE_NORMAL;
+  } catch {
+    speedPref.rate = SPEECH_RATE_NORMAL;
+  }
+}
+async function saveSpeedPref(rate) {
+  speedPref.rate = rate;
+  try {
+    await window.storage.set("speedPref", JSON.stringify({ rate }), false);
+  } catch {
+  }
+}
 function pickVoice() {
   if (!window.speechSynthesis) return null;
   const voices = window.speechSynthesis.getVoices();
@@ -22103,7 +22122,7 @@ function useSpeech() {
       const utter = new window.SpeechSynthesisUtterance(cleanForSpeech(rawText));
       const voice = pickVoice();
       utter.lang = voice ? voice.lang : "it-IT";
-      utter.rate = 0.95;
+      utter.rate = speedPref.rate;
       if (voice) utter.voice = voice;
       utter.onend = () => {
         setSpeaking(false);
@@ -22132,7 +22151,23 @@ function useSpeech() {
 }
 function SpeakButton({ text, color, label = "Ascolta" }) {
   const { speak, stop, speaking, supported } = useSpeech();
-  return /* @__PURE__ */ React.createElement(
+  const [fast, setFast] = useState(speedPref.rate >= SPEECH_RATE_FAST);
+  useEffect(() => {
+    let alive = true;
+    loadSpeedPref().then(() => {
+      if (alive) setFast(speedPref.rate >= SPEECH_RATE_FAST);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const toggleSpeed = () => {
+    const nextFast = !fast;
+    setFast(nextFast);
+    saveSpeedPref(nextFast ? SPEECH_RATE_FAST : SPEECH_RATE_NORMAL);
+    if (speaking) speak(text);
+  };
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "inline-flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => supported && (speaking ? stop() : speak(text)),
@@ -22155,7 +22190,25 @@ function SpeakButton({ text, color, label = "Ascolta" }) {
     },
     speaking ? /* @__PURE__ */ React.createElement(Square, { size: 14 }) : /* @__PURE__ */ React.createElement(Volume2, { size: 14 }),
     speaking ? "Ferma" : label
-  );
+  ), supported && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: toggleSpeed,
+      title: "Velocit\xE0 di lettura",
+      style: {
+        padding: "9px 11px",
+        borderRadius: 11,
+        border: `1.5px solid ${color}`,
+        background: "transparent",
+        color,
+        fontSize: "calc(0.82em * var(--fs))",
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: FONT
+      }
+    },
+    fast ? "1,5\xD7" : "1\xD7"
+  ));
 }
 function SaveButton({ onSave, color }) {
   const [saved, setSaved] = useState(false);
@@ -23250,8 +23303,8 @@ function ArchivioViewerModal({ item, onClose }) {
   if (item.type === "mappa" && parsed) {
     body = /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(MappaWebScreen, { embedded: true, initialData: parsed, onSave: () => {
     } }));
-  } else if (item.type === "flashcard" && Array.isArray(parsed)) {
-    body = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, parsed.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6 } }, c.fronte), /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft } }, c.retro))));
+  } else if (item.type === "flashcard") {
+    body = /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, margin: 0 } }, "Le risposte non si mostrano qui: apri la sezione Flashcard per rifare il test.");
   } else if (item.type === "quiz" && parsed && Array.isArray(parsed.questions)) {
     const { questions, graded } = parsed;
     body = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, questions.map((q, i) => {
@@ -23271,9 +23324,29 @@ function ArchivioViewerModal({ item, onClose }) {
   }
   return /* @__PURE__ */ React.createElement("div", { style: overlayStyle, onClick: onClose }, /* @__PURE__ */ React.createElement("div", { style: boxStyle, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "calc(1.2em * var(--fs))", color: C.ink } }, item.title), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { ...iconButtonStyle, flexShrink: 0 }, "aria-label": "Chiudi" }, /* @__PURE__ */ React.createElement(X, { size: 18, color: C.ink }))), body));
 }
-function ArchivioWebScreen({ items, onDelete }) {
+function parseSavedDeck(content) {
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.map((c) => ({ fronte: String(c.fronte || ""), retro: String(c.retro || "") }));
+    }
+  } catch {
+  }
+  return null;
+}
+function ArchivioWebScreen({ items, onDelete, onOpenFlashcards }) {
   const [filtro, setFiltro] = useState("tutti");
   const [viewing, setViewing] = useState(null);
+  const openItem = (item) => {
+    if (item.type === "flashcard" && onOpenFlashcards) {
+      const deck = parseSavedDeck(item.content);
+      if (deck) {
+        onOpenFlashcards(deck);
+        return;
+      }
+    }
+    setViewing(item);
+  };
   const tipi = ["tutti", ...Array.from(new Set(items.map((i) => i.type)))];
   const filtrati = filtro === "tutti" ? items : items.filter((i) => i.type === filtro);
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 900 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Archivio", subtitle: `${items.length} materiali salvati.` }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" } }, tipi.map((t) => /* @__PURE__ */ React.createElement(
@@ -23287,12 +23360,12 @@ function ArchivioWebScreen({ items, onDelete }) {
   ))), filtrati.length === 0 ? /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft } }, "Niente qui per ora.") : /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 } }, filtrati.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 } }, /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => setViewing(item),
+      onClick: () => openItem(item),
       style: { background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", width: "100%", display: "block", marginBottom: 10 }
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6, fontSize: "calc(0.95em * var(--fs))" } }, item.title),
     /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", textTransform: "capitalize" } }, item.type)
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setViewing(item), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, "Apri"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina"))))), viewing && /* @__PURE__ */ React.createElement(ArchivioViewerModal, { item: viewing, onClose: () => setViewing(null) }));
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => openItem(item), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, item.type === "flashcard" ? "Rifai il test" : "Apri"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina"))))), viewing && /* @__PURE__ */ React.createElement(ArchivioViewerModal, { item: viewing, onClose: () => setViewing(null) }));
 }
 function parseFlashcardJson(raw) {
   const cleaned = raw.replace(/```json|```/g, "").trim();
@@ -23300,12 +23373,13 @@ function parseFlashcardJson(raw) {
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("empty");
   return parsed.map((c) => ({ fronte: String(c.fronte || "").trim(), retro: String(c.retro || "").trim() }));
 }
-function FlashcardScreen({ fontScale, onSave }) {
+function FlashcardScreen({ fontScale, onSave, initialCards }) {
+  const hasInitialDeck = Array.isArray(initialCards) && initialCards.length > 0;
   const [image, setImage] = useState(null);
   const [text, setText] = useState("");
-  const [status, setStatus] = useState("input");
+  const [status, setStatus] = useState(hasInitialDeck ? "studio" : "input");
   const [error, setError] = useState("");
-  const [cards, setCards] = useState([]);
+  const [cards, setCards] = useState(hasInitialDeck ? initialCards : []);
   const [current, setCurrent] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [mostraRetro, setMostraRetro] = useState(false);
@@ -24811,6 +24885,48 @@ function InterrogazioneScreen({ onSave }) {
 const RIASSUNTO_SYSTEM = "Sei un assistente che scrive riassunti chiari per studenti con DSA, a partire da un argomento, un testo o una foto. Scrivi in prosa scorrevole, frasi brevi e dirette, evidenzia con **doppio asterisco** i 4-6 termini chiave pi\xF9 importanti. Usa '## ' per dividere in 2-4 sezioni tematiche se il contenuto lo giustifica. Rispondi solo con il riassunto.";
 const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 semplice per studenti con DSA, a partire da un argomento, un testo o una foto. Frasi corte, una idea per frase, parole comuni al posto di termini difficili quando possibile (spiega quelli tecnici indispensabili). Usa '## ' per dividere in sezioni brevi. Rispondi solo con il testo semplificato.";
 const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Questi studenti spesso fanno fatica a memorizzare i termini tecnici e a visualizzarli mentalmente: ogni volta che usi un termine tecnico (es. "discriminante", "disequazione", "coefficiente", "verso della disuguaglianza"), spiegalo subito con parole semplici e concrete, non darlo mai per scontato. Non avere fretta di essere breve: \xE8 molto meglio una frase in pi\xF9 che spiega bene, piuttosto che una definizione telegrafica che lo studente non riesce a seguire. Elenca le formule rilevanti con "- ", spiegando ogni simbolo in modo chiaro e comprensibile, con un esempio concreto se aiuta a capire. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", spiegando con calma, con parole semplici, cosa si fa e perch\xE9 \u2014 come se lo spiegassi a voce a uno studente che ha bisogno di tempo per capire, non come una lista di operazioni. Rispondi solo con il formulario.';
+const SUBSCRIPTION_GATING_ENABLED = false;
+const PAID_SECTIONS = ["facile", "formulario", "flashcard", "interrogazione", "mappe", "dizionario"];
+function isUserSubscribed(clerkUser) {
+  return !!(clerkUser && clerkUser.publicMetadata && clerkUser.publicMetadata.abbonato === true);
+}
+function LockedScreen({ sectionId, onBack }) {
+  const section = SECTIONS.find((s) => s.id === sectionId);
+  const title = section ? section.title : "Questa sezione";
+  const color = section ? section.color : C.plum;
+  return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 560 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle: "Questa sezione fa parte del piano Plus." }), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 16,
+        padding: "28px 26px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 14
+      }
+    },
+    /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          width: 44,
+          height: 44,
+          borderRadius: 12,
+          background: color + "22",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }
+      },
+      /* @__PURE__ */ React.createElement(Lock, { size: 20, color })
+    ),
+    /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.98em * var(--fs))", lineHeight: 1.6, margin: 0 } }, "Per usare ", title, " serve il piano Plus. Scrivi ad Adriano per attivarlo sul tuo account."),
+    /* @__PURE__ */ React.createElement("button", { onClick: onBack, style: secondaryBtnStyle }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 15 }), " Torna alla Home")
+  ));
+}
 function App() {
   const [active, setActive] = useState("home");
   const [collapsed, setCollapsed] = useState(() => {
@@ -24832,7 +24948,16 @@ function App() {
   const [clerkReady, setClerkReady] = useState(false);
   const [clerkError, setClerkError] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [flashcardLaunch, setFlashcardLaunch] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
+  const openFlashcardDeck = (cards) => {
+    setFlashcardLaunch({ cards, nonce: Date.now() });
+    setActive("flashcard");
+  };
+  useEffect(() => {
+    if (active !== "flashcard" && flashcardLaunch) setFlashcardLaunch(null);
+  }, [active, flashcardLaunch]);
   const signInBoxRef = useRef(null);
   const sectionStateRef = useRef({});
   const getSectionState = (id) => sectionStateRef.current[id];
@@ -24853,8 +24978,10 @@ function App() {
       if (!alive) return;
       setClerkReady(true);
       setIsSignedIn(!!clerk.user && !!clerk.session);
+      setIsSubscribed(isUserSubscribed(clerk.user));
       clerk.addListener(({ user, session }) => {
         setIsSignedIn(!!user && !!session);
+        setIsSubscribed(isUserSubscribed(user));
       });
     }).catch(() => {
       if (!alive) return;
@@ -24946,7 +25073,9 @@ function App() {
     );
   }
   let content;
-  if (active === "home") {
+  if (SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes(active) && !isSubscribed) {
+    content = /* @__PURE__ */ React.createElement(LockedScreen, { sectionId: active, onBack: () => setActive("home") });
+  } else if (active === "home") {
     content = /* @__PURE__ */ React.createElement(Home, { onSelect: setActive, archivioCount: archivio.length });
   } else if (active === "riassunto") {
     content = /* @__PURE__ */ React.createElement(
@@ -24997,7 +25126,7 @@ function App() {
       }
     );
   } else if (active === "flashcard") {
-    content = /* @__PURE__ */ React.createElement(FlashcardScreen, { onSave: addToArchivio });
+    content = /* @__PURE__ */ React.createElement(FlashcardScreen, { key: flashcardLaunch ? flashcardLaunch.nonce : "flashcard", onSave: addToArchivio, initialCards: flashcardLaunch ? flashcardLaunch.cards : null });
   } else if (active === "quiz") {
     content = /* @__PURE__ */ React.createElement(QuizWebScreen, { onSave: addToArchivio });
   } else if (active === "interrogazione") {
@@ -25012,7 +25141,7 @@ function App() {
   } else if (active === "dizionario") {
     content = /* @__PURE__ */ React.createElement(DizionarioWebScreen, { onSave: addToArchivio });
   } else if (active === "archivio") {
-    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio });
+    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck });
   } else if (active === "voce") {
     content = /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Voce di lettura", subtitle: "In arrivo in questa versione del sito." }));
   } else if (active === "segnalazioni") {
