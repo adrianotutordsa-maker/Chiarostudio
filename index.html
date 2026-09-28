@@ -22065,12 +22065,13 @@ async function saveVoicePref(uri) {
   }
 }
 const SPEECH_RATE_NORMAL = 0.95;
-const SPEECH_RATE_FAST = 1.5;
+const SPEECH_RATE_FAST = 1.2;
 const speedPref = { rate: SPEECH_RATE_NORMAL };
 async function loadSpeedPref() {
   try {
     const res = await window.storage.get("speedPref", false);
-    speedPref.rate = res && res.value ? JSON.parse(res.value).rate : SPEECH_RATE_NORMAL;
+    const savedRate = res && res.value ? JSON.parse(res.value).rate : SPEECH_RATE_NORMAL;
+    speedPref.rate = savedRate > SPEECH_RATE_NORMAL ? SPEECH_RATE_FAST : SPEECH_RATE_NORMAL;
   } catch {
     speedPref.rate = SPEECH_RATE_NORMAL;
   }
@@ -22207,7 +22208,7 @@ function SpeakButton({ text, color, label = "Ascolta" }) {
         fontFamily: FONT
       }
     },
-    fast ? "1,5\xD7" : "1\xD7"
+    fast ? "1,2\xD7" : "1\xD7"
   ));
 }
 function SaveButton({ onSave, color }) {
