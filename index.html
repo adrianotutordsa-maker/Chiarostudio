@@ -4,6 +4,88 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Chiarostudio — sito</title>
+<script>
+/* Ponte con l'app Android di Chiarostudio: attivo solo dentro l'app
+   (dove esiste window.ChiaroAndroid). Nel browser normale non fa nulla. */
+(function () {
+  var A = window.ChiaroAndroid;
+  if (!A) return;
+  document.documentElement.className += " chiaro-app";
+  var st = document.createElement("style");
+  st.textContent = '[class*="cl-socialButtons"],.cl-dividerRow{display:none!important}';
+  document.head.appendChild(st);
+
+  /* Lettura vocale -> sintesi vocale nativa di Android */
+  var utts = {}, seq = 0, speaking = false, listeners = {};
+  function Utt(text) {
+    this.text = text || ""; this.lang = "it-IT"; this.rate = 1; this.pitch = 1; this.volume = 1;
+    this.voice = null; this.onend = null; this.onerror = null; this.onstart = null;
+  }
+  var synth = {
+    get speaking() { return speaking; },
+    paused: false, pending: false, onvoiceschanged: null,
+    getVoices: function () { try { return JSON.parse(A.ttsVoices() || "[]"); } catch (e) { return []; } },
+    speak: function (u) {
+      var id = "u" + (++seq);
+      utts[id] = u; speaking = true;
+      A.ttsSpeak(id, String(u.text || ""), String(u.lang || ""),
+        u.voice && u.voice.voiceURI ? String(u.voice.voiceURI) : "",
+        Number(u.rate) || 1, Number(u.pitch) || 1);
+    },
+    cancel: function () {
+      var old = utts; utts = {}; speaking = false; A.ttsStop();
+      Object.keys(old).forEach(function (id) {
+        var u = old[id];
+        if (u && u.onerror) setTimeout(function () { try { u.onerror({ type: "error", error: "interrupted", utterance: u }); } catch (e) {} }, 0);
+      });
+    },
+    pause: function () {}, resume: function () {},
+    addEventListener: function (t, f) { (listeners[t] = listeners[t] || []).push(f); },
+    removeEventListener: function (t, f) { listeners[t] = (listeners[t] || []).filter(function (x) { return x !== f; }); }
+  };
+  window.__chiaroTTS = {
+    event: function (id, type) {
+      var u = utts[id];
+      if (!u) return;
+      if (type !== "start") { delete utts[id]; if (!Object.keys(utts).length) speaking = false; }
+      var h = u["on" + type];
+      if (h) try { h({ type: type, utterance: u }); } catch (e) {}
+    },
+    voicesChanged: function () {
+      (listeners.voiceschanged || []).slice().forEach(function (f) { try { f({ type: "voiceschanged" }); } catch (e) {} });
+      if (synth.onvoiceschanged) try { synth.onvoiceschanged({ type: "voiceschanged" }); } catch (e) {}
+    }
+  };
+  try { Object.defineProperty(window, "speechSynthesis", { configurable: true, get: function () { return synth; } }); }
+  catch (e) { window.speechSynthesis = synth; }
+  window.SpeechSynthesisUtterance = Utt;
+
+  /* Dettatura -> riconoscimento vocale di Android */
+  if (A.canDictate && A.canDictate()) {
+    var recs = {}, rseq = 0;
+    var SR = function () {
+      this.lang = "it-IT"; this.interimResults = false; this.continuous = false; this.maxAlternatives = 1;
+      this.onresult = null; this.onerror = null; this.onend = null; this.onstart = null; this._id = null;
+    };
+    SR.prototype.start = function () { var id = "r" + (++rseq); this._id = id; recs[id] = this; A.dictStart(id, String(this.lang || "it-IT")); };
+    SR.prototype.stop = function () { if (this._id) A.dictStop(this._id); };
+    SR.prototype.abort = SR.prototype.stop;
+    SR.prototype.addEventListener = function () {};
+    window.SpeechRecognition = SR;
+    window.webkitSpeechRecognition = SR;
+    window.__chiaroSR = {
+      result: function (id, text) {
+        var r = recs[id]; if (!r) return;
+        var res = [{ transcript: text, confidence: 1 }]; res.isFinal = true;
+        if (r.onresult) try { r.onresult({ results: [res], resultIndex: 0 }); } catch (e) {}
+      },
+      error: function (id, code) { var r = recs[id]; if (r && r.onerror) try { r.onerror({ error: code }); } catch (e) {} },
+      end: function (id) { var r = recs[id]; if (!r) return; delete recs[id]; if (r.onend) try { r.onend({}); } catch (e) {} }
+    };
+  }
+})();
+</script>
+
 <style>
   html, body { margin: 0; padding: 0; background: #F7EFE3; }
   #root { min-height: 100vh; }
@@ -21705,12 +21787,35 @@ function lookupOffline(lingua, word) {
   const key = word.toLowerCase().trim();
   return dict[key] || null;
 }
+function chiaroClerkRouterOptions() {
+  const go = (to, replace) => {
+    const u = new URL(to, window.location.href);
+    const here = window.location;
+    if (u.origin === here.origin && u.pathname === here.pathname && u.search === here.search) {
+      if (u.hash) {
+        if (replace) here.replace(u.href);
+        else here.hash = u.hash;
+      } else {
+        history[replace ? "replaceState" : "pushState"](null, "", u.pathname + u.search);
+        window.dispatchEvent(new Event("hashchange"));
+      }
+      return Promise.resolve();
+    }
+    if (replace) here.replace(u.href);
+    else here.assign(u.href);
+    return Promise.resolve();
+  };
+  return {
+    routerPush: (to) => go(to, false),
+    routerReplace: (to) => go(to, true)
+  };
+}
 function waitForClerk() {
   return new Promise((resolve, reject) => {
     const scadenza = Date.now() + 1e4;
     function check() {
       if (window.Clerk) {
-        window.Clerk.load().then(() => resolve(window.Clerk)).catch(() => reject(new Error("clerk_load_error")));
+        window.Clerk.load(window.ChiaroAndroid ? chiaroClerkRouterOptions() : void 0).then(() => resolve(window.Clerk)).catch(() => reject(new Error("clerk_load_error")));
       } else if (Date.now() > scadenza) {
         reject(new Error("clerk_timeout"));
       } else {
@@ -22155,10 +22260,12 @@ function cleanForSpeech(text) {
   return text.replace(/^##\s+/gm, "").replace(/^[-•]\s+/gm, "").replace(/\*\*/g, "").trim();
 }
 const voicePref = { uri: null };
+const VOICE_PREF_KEY = "chiarostudio-voce";
+const SPEED_PREF_KEY = "chiarostudio-velocita";
 async function loadVoicePref() {
   try {
-    const res = await window.storage.get("voicePref", false);
-    voicePref.uri = res && res.value ? JSON.parse(res.value).uri : null;
+    const raw = window.localStorage.getItem(VOICE_PREF_KEY);
+    voicePref.uri = raw ? JSON.parse(raw).uri || null : null;
   } catch {
     voicePref.uri = null;
   }
@@ -22166,7 +22273,8 @@ async function loadVoicePref() {
 async function saveVoicePref(uri) {
   voicePref.uri = uri;
   try {
-    await window.storage.set("voicePref", JSON.stringify({ uri }), false);
+    if (uri) window.localStorage.setItem(VOICE_PREF_KEY, JSON.stringify({ uri }));
+    else window.localStorage.removeItem(VOICE_PREF_KEY);
   } catch {
   }
 }
@@ -22175,8 +22283,8 @@ const SPEECH_RATE_FAST = 1.2;
 const speedPref = { rate: SPEECH_RATE_NORMAL };
 async function loadSpeedPref() {
   try {
-    const res = await window.storage.get("speedPref", false);
-    const savedRate = res && res.value ? JSON.parse(res.value).rate : SPEECH_RATE_NORMAL;
+    const raw = window.localStorage.getItem(SPEED_PREF_KEY);
+    const savedRate = raw ? JSON.parse(raw).rate : SPEECH_RATE_NORMAL;
     speedPref.rate = savedRate > SPEECH_RATE_NORMAL ? SPEECH_RATE_FAST : SPEECH_RATE_NORMAL;
   } catch {
     speedPref.rate = SPEECH_RATE_NORMAL;
@@ -22185,7 +22293,7 @@ async function loadSpeedPref() {
 async function saveSpeedPref(rate) {
   speedPref.rate = rate;
   try {
-    await window.storage.set("speedPref", JSON.stringify({ rate }), false);
+    window.localStorage.setItem(SPEED_PREF_KEY, JSON.stringify({ rate }));
   } catch {
   }
 }
@@ -22211,46 +22319,96 @@ function useVoices() {
   }, []);
   return voices;
 }
+let speechSessionCounter = 0;
+let currentSpeechToken = 0;
+function splitSpeechChunks(text, max = 220) {
+  const pieces = String(text || "").replace(/\s+\n/g, "\n").match(/[^.!?;:\n]+[.!?;:]*\n?|\n/g) || [];
+  const out = [];
+  let cur = "";
+  const push = () => {
+    if (cur.trim()) out.push(cur.trim());
+    cur = "";
+  };
+  pieces.forEach((p) => {
+    let piece = p;
+    while (piece.length > max) {
+      push();
+      let cut = piece.lastIndexOf(" ", max);
+      if (cut < max * 0.5) cut = max;
+      out.push(piece.slice(0, cut).trim());
+      piece = piece.slice(cut);
+    }
+    if ((cur + piece).length > max) push();
+    cur += piece.endsWith("\n") ? piece.trim() + " " : piece;
+  });
+  push();
+  return out.filter((c) => /[\p{L}\p{N}]/u.test(c));
+}
 function useSpeech() {
   const [speaking, setSpeaking] = useState(false);
-  const keepAliveRef = useRef(null);
-  const supported = typeof window !== "undefined" && !!window.speechSynthesis;
+  const tokenRef = useRef(0);
+  const uttsRef = useRef([]);
+  const watchRef = useRef(null);
+  const supported = typeof window !== "undefined" && !!window.speechSynthesis && !!window.SpeechSynthesisUtterance;
+  const clearWatch = () => {
+    if (watchRef.current) clearInterval(watchRef.current);
+    watchRef.current = null;
+  };
+  const finish = (token) => {
+    if (tokenRef.current !== token) return;
+    clearWatch();
+    uttsRef.current = [];
+    setSpeaking(false);
+  };
   useEffect(() => {
     return () => {
-      if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      clearWatch();
+      if (tokenRef.current && currentSpeechToken === tokenRef.current && window.speechSynthesis) {
+        tokenRef.current = 0;
+        window.speechSynthesis.cancel();
+      }
     };
   }, []);
   const speak = (rawText) => {
     if (!supported) return;
+    const token = ++speechSessionCounter;
+    tokenRef.current = token;
+    currentSpeechToken = token;
+    clearWatch();
     window.speechSynthesis.cancel();
-    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    const chunks = splitSpeechChunks(cleanForSpeech(rawText));
+    if (!chunks.length) {
+      setSpeaking(false);
+      return;
+    }
+    setSpeaking(true);
     setTimeout(() => {
-      const utter = new window.SpeechSynthesisUtterance(cleanForSpeech(rawText));
+      if (tokenRef.current !== token) return;
       const voice = pickVoice();
-      utter.lang = voice ? voice.lang : "it-IT";
-      utter.rate = speedPref.rate;
-      if (voice) utter.voice = voice;
-      utter.onend = () => {
-        setSpeaking(false);
-        if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-      };
-      utter.onerror = () => {
-        setSpeaking(false);
-        if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-      };
-      window.speechSynthesis.speak(utter);
-      setSpeaking(true);
-      keepAliveRef.current = setInterval(() => {
-        if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-          window.speechSynthesis.pause();
-          window.speechSynthesis.resume();
-        }
-      }, 9e3);
-    }, 80);
+      const list = chunks.map((c, i) => {
+        const u = new window.SpeechSynthesisUtterance(c);
+        u.lang = voice ? voice.lang : "it-IT";
+        u.rate = speedPref.rate;
+        if (voice) u.voice = voice;
+        u.onend = () => {
+          if (i === chunks.length - 1) finish(token);
+        };
+        u.onerror = () => finish(token);
+        return u;
+      });
+      uttsRef.current = list;
+      list.forEach((u) => window.speechSynthesis.speak(u));
+      const startedAt = Date.now();
+      watchRef.current = setInterval(() => {
+        if (Date.now() - startedAt < 2500) return;
+        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) finish(token);
+      }, 1e3);
+    }, 120);
   };
   const stop = () => {
-    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    tokenRef.current = ++speechSessionCounter;
+    clearWatch();
+    uttsRef.current = [];
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     setSpeaking(false);
   };
@@ -22346,73 +22504,131 @@ function SaveButton({ onSave, color }) {
     saved ? "Salvato" : "Salva"
   );
 }
+function dictationErrorMessage(code) {
+  const inApp = !!window.ChiaroAndroid;
+  if (code === "not-allowed" || code === "service-not-allowed") {
+    return inApp ? "Permesso al microfono negato." : "Il microfono \xE8 bloccato: consentilo toccando il lucchetto accanto all'indirizzo.";
+  }
+  if (code === "no-speech") return "Non ho sentito nulla. Tocca e parla subito dopo.";
+  if (code === "audio-capture") return "Non trovo il microfono, o lo sta usando un'altra app.";
+  if (code === "network") return "La dettatura ha bisogno di internet.";
+  if (code === "language-not-supported") return "L'italiano non \xE8 disponibile per la dettatura qui.";
+  return "Non ho capito bene, riprova.";
+}
 function useDictation() {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
   const recRef = useRef(null);
-  const timeoutRef = useRef(null);
-  const gotSomethingRef = useRef(false);
+  const watchRef = useRef(null);
   const supported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const clearWatch = () => {
+    if (watchRef.current) clearTimeout(watchRef.current);
+    watchRef.current = null;
+  };
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (recRef.current) recRef.current.stop();
+      clearWatch();
+      const rec = recRef.current;
+      if (rec) {
+        rec.__chiaroDead = true;
+        try {
+          rec.abort ? rec.abort() : rec.stop();
+        } catch {
+        }
+      }
     };
   }, []);
   const start = (onResult) => {
     setError("");
     if (!supported) {
-      setError("Il microfono non \xE8 disponibile in questo browser.");
+      setError(window.ChiaroAndroid ? "La dettatura non \xE8 disponibile su questo telefono." : "La dettatura non funziona in questo browser: prova con Chrome.");
       return;
+    }
+    try {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    } catch {
     }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
     rec.lang = "it-IT";
-    rec.interimResults = false;
+    rec.interimResults = true;
+    rec.continuous = false;
     rec.maxAlternatives = 1;
-    gotSomethingRef.current = false;
+    let finalText = "";
+    let lastHeard = "";
+    let delivered = false;
+    let errored = false;
+    const arm = () => {
+      clearWatch();
+      if (window.ChiaroAndroid) return;
+      watchRef.current = setTimeout(() => {
+        try {
+          rec.stop();
+        } catch {
+        }
+      }, 15e3);
+    };
     rec.onresult = (e) => {
-      gotSomethingRef.current = true;
-      const t = Array.from(e.results).map((r) => r[0].transcript).join(" ");
-      onResult(t);
+      arm();
+      let fin = "";
+      let tmp = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) fin += r[0].transcript + " ";
+        else tmp += r[0].transcript + " ";
+      }
+      if (fin.trim()) finalText = fin.trim();
+      if ((fin + tmp).trim()) lastHeard = (fin + tmp).trim();
     };
     rec.onerror = (e) => {
-      gotSomethingRef.current = true;
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      setError(
-        e.error === "not-allowed" || e.error === "service-not-allowed" ? "Permesso al microfono negato in questa anteprima." : "Non ho sentito bene, riprova."
-      );
-      setListening(false);
+      const code = e && e.error;
+      if (code === "aborted") return;
+      errored = true;
+      setError(dictationErrorMessage(code));
     };
     rec.onend = () => {
+      clearWatch();
+      if (rec.__chiaroDead) return;
+      if (recRef.current === rec) recRef.current = null;
       setListening(false);
-      if (!gotSomethingRef.current) {
-        setError("Il microfono non ha risposto in questa anteprima.");
+      const text = (finalText || lastHeard).trim();
+      if (text && !delivered) {
+        delivered = true;
+        setError("");
+        onResult(text);
+      } else if (!errored && !rec.__chiaroStopped) {
+        setError("Non ho sentito nulla. Tocca e parla subito dopo.");
       }
     };
     recRef.current = rec;
     try {
       rec.start();
       setListening(true);
-      timeoutRef.current = setTimeout(() => {
-        if (!gotSomethingRef.current) {
-          setError("Il microfono non risponde in questa anteprima.");
-          try {
-            rec.stop();
-          } catch {
-          }
-          setListening(false);
-        }
-      }, 6e3);
+      arm();
     } catch {
-      setError("Non riesco ad avviare il microfono qui.");
+      recRef.current = null;
+      setError("Non riesco ad avviare il microfono. Riprova tra un attimo.");
       setListening(false);
     }
   };
   const stop = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (recRef.current) recRef.current.stop();
-    setListening(false);
+    clearWatch();
+    const rec = recRef.current;
+    if (!rec) {
+      setListening(false);
+      return;
+    }
+    rec.__chiaroStopped = true;
+    try {
+      rec.stop();
+    } catch {
+    }
+    setTimeout(() => {
+      if (recRef.current === rec) {
+        recRef.current = null;
+        setListening(false);
+      }
+    }, 2500);
   };
   return { start, stop, listening, error, supported };
 }
@@ -22440,7 +22656,7 @@ function DictateButton({ onResult, color = C.ink, size = 34 }) {
       }
     },
     /* @__PURE__ */ React.createElement(Mic, { size: 16, color: listening ? "#FBFAF4" : C.inkSoft })
-  ), error && /* @__PURE__ */ React.createElement(
+  ), listening && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "calc(0.68em * var(--fs))", color, marginTop: 3, fontWeight: 700 } }, "Ti ascolto\u2026"), !listening && error && /* @__PURE__ */ React.createElement(
     "span",
     {
       style: {
@@ -23063,6 +23279,365 @@ function LandingPage({ onEnter }) {
     "Entra nell'app"
   ), /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "0.82em", marginTop: 34 } }, "Vai con calma \u2014 ogni passo conta."))));
 }
+/* ---------- Segnalazioni condivise (chiave unica nella cache condivisa del Worker) ---------- */
+const REPORTS_SHARED_KEY = "segnalazioni";
+const REPORT_KIND_LABELS = { riassunto: "Riassunto", facile: "Testo facile", formulario: "Formulario", dizionario: "Dizionario" };
+async function reportsRequest(body) {
+  const token = await getClerkToken();
+  const res = await fetch(API_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error("request_failed");
+  return res.json();
+}
+async function loadSharedReports() {
+  const data = await reportsRequest({ type: "cache_get", key: REPORTS_SHARED_KEY });
+  if (!data.value) return [];
+  const parsed = JSON.parse(data.value);
+  return Array.isArray(parsed) ? parsed : [];
+}
+async function saveSharedReports(list) {
+  const data = await reportsRequest({ type: "cache_set", key: REPORTS_SHARED_KEY, value: JSON.stringify(list) });
+  if (!data.ok) throw new Error("save_failed");
+}
+async function setReportStatus(id, status) {
+  const list = await loadSharedReports();
+  await saveSharedReports(list.map((r) => r.id === id ? { ...r, status, resolvedAt: Date.now() } : r));
+}
+async function forgetLocalTopic(key) {
+  const cache = await loadTopicCache();
+  if (cache[key]) {
+    delete cache[key];
+    await saveTopicCache(cache);
+  }
+}
+async function applyReportCorrection(report, editedText) {
+  const raw = await sharedCacheGet(report.cacheKey);
+  let entry = {};
+  try {
+    entry = raw ? JSON.parse(raw) : {};
+  } catch {
+    entry = {};
+  }
+  if (report.kind === "dizionario") {
+    entry = { ...entry, voce: editedText, alternative: entry.alternative || [], savedAt: Date.now() };
+  } else {
+    entry = { ...entry, content: editedText, diagram: entry.diagram ?? null, savedAt: Date.now() };
+  }
+  const data = await reportsRequest({ type: "cache_set", key: report.cacheKey, value: JSON.stringify(entry) });
+  if (!data.ok) throw new Error("save_failed");
+  await forgetLocalTopic(report.cacheKey);
+}
+async function clearSharedEntry(key) {
+  const data = await reportsRequest({ type: "cache_set", key, value: "" });
+  if (!data.ok) throw new Error("save_failed");
+  await forgetLocalTopic(key);
+}
+function formatReportDate(ts) {
+  try {
+    return new Date(ts).toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return "";
+  }
+}
+const reportTextareaStyle = {
+  width: "100%",
+  borderRadius: 10,
+  border: `1px solid ${C.border}`,
+  padding: "10px 12px",
+  fontFamily: FONT,
+  fontSize: "calc(0.92em * var(--fs))",
+  color: C.ink,
+  boxSizing: "border-box",
+  resize: "vertical",
+  background: "#fff"
+};
+function ReportBox({ kind, topic, cacheKey, content, onForgetLocal }) {
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [state, setState] = useState("idle");
+  const send = async () => {
+    setState("sending");
+    try {
+      const list = await loadSharedReports();
+      list.push({
+        id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+        kind,
+        topic,
+        cacheKey: cacheKey || null,
+        note: note.trim(),
+        snapshot: content,
+        status: "aperta",
+        createdAt: Date.now()
+      });
+      await saveSharedReports(list);
+      if (cacheKey && onForgetLocal) onForgetLocal(cacheKey);
+      setState("sent");
+    } catch {
+      setState("error");
+    }
+  };
+  if (state === "sent") {
+    return h("p", { style: { color: C.moss, fontWeight: 700, fontSize: "calc(0.85em * var(--fs))", margin: "14px 0 0" } }, h(Check, { size: 14 }), " Segnalazione inviata, grazie \u2014 verr\xE0 rivista.");
+  }
+  if (!open) {
+    return h("button", { onClick: () => setOpen(true), style: { ...secondaryBtnStyle, marginTop: 14, color: C.inkSoft } }, h(Flag, { size: 15 }), " Segnala un errore");
+  }
+  return h(
+    "div",
+    { style: { marginTop: 14, background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14 } },
+    h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8, fontSize: "calc(0.92em * var(--fs))" } }, "Cosa non va?"),
+    h("textarea", {
+      value: note,
+      onChange: (e) => setNote(e.target.value),
+      placeholder: "Facoltativo: per esempio \xABmanca la data\xBB o \xABquesta formula \xE8 sbagliata\xBB",
+      rows: 3,
+      style: reportTextareaStyle
+    }),
+    state === "error" && h("p", { style: { color: C.wine, fontSize: "calc(0.85em * var(--fs))", margin: "8px 0 0" } }, "Non sono riuscito a inviare la segnalazione. Controlla la connessione e riprova."),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } },
+      h("button", { onClick: send, disabled: state === "sending", style: { ...secondaryBtnStyle, background: C.ink, color: "#FBFAF4", borderColor: C.ink } }, state === "sending" ? "Invio\u2026" : "Invia segnalazione"),
+      h("button", { onClick: () => setOpen(false), disabled: state === "sending", style: secondaryBtnStyle }, "Annulla")
+    )
+  );
+}
+function ReportDetail({ report, onBack, onDone }) {
+  const h = React.createElement;
+  const [text, setText] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let current = report.snapshot || "";
+      if (report.cacheKey) {
+        const raw = await sharedCacheGet(report.cacheKey);
+        if (raw) {
+          try {
+            const p = JSON.parse(raw);
+            current = (report.kind === "dizionario" ? p.voce : p.content) || current;
+          } catch {
+          }
+        }
+      }
+      if (alive) setText(current);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const run = async (fn, status) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await setReportStatus(report.id, status);
+      onDone(report.id);
+    } catch {
+      setError("Non sono riuscito a completare l'operazione. Controlla la connessione e riprova.");
+      setBusy(false);
+    }
+  };
+  return h(
+    "div",
+    { style: { maxWidth: 760 } },
+    h("button", { onClick: onBack, style: { ...secondaryBtnStyle, marginBottom: 14 } }, h(ArrowLeft, { size: 15 }), " Torna all'elenco"),
+    h(PageHeader, { title: REPORT_KIND_LABELS[report.kind] || "Segnalazione", subtitle: `${report.topic || "senza titolo"} \xB7 ${formatReportDate(report.createdAt)}` }),
+    report.note ? h("div", { style: { background: C.peachSoft, borderRadius: 12, padding: "10px 14px", marginBottom: 14, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, h("strong", null, "Nota: "), report.note) : h("p", { style: { color: C.inkSoft, fontSize: "calc(0.88em * var(--fs))", margin: "0 0 14px" } }, "Nessuna nota: chi ha segnalato ha solo premuto il pulsante."),
+    text === null ? h("p", { style: { color: C.inkSoft } }, "Carico il contenuto\u2026") : h(
+      React.Fragment,
+      null,
+      h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6 } }, report.cacheKey ? "Contenuto attuale (puoi riscriverlo)" : "Contenuto segnalato"),
+      h("textarea", { value: text, onChange: (e) => setText(e.target.value), rows: 14, readOnly: !report.cacheKey, style: { ...reportTextareaStyle, lineHeight: 1.55 } }),
+      !report.cacheKey && h("p", { style: { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))" } }, "Questa segnalazione non \xE8 collegata a un argomento condiviso (testo lungo o foto): puoi leggerla e poi ignorarla."),
+      error && h("p", { style: { color: C.wine, fontSize: "calc(0.88em * var(--fs))" } }, error),
+      h(
+        "div",
+        { style: { display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" } },
+        report.cacheKey && h("button", { disabled: busy || !text.trim(), onClick: () => run(() => applyReportCorrection(report, text), "corretta"), style: { ...secondaryBtnStyle, background: C.ink, color: "#FBFAF4", borderColor: C.ink } }, h(Save, { size: 15 }), " Salva la correzione per tutti"),
+        report.cacheKey && h("button", { disabled: busy, onClick: () => run(() => clearSharedEntry(report.cacheKey), "eliminata"), style: secondaryBtnStyle }, h(Trash2, { size: 15 }), " Elimina dalla cache (si rigenera)"),
+        h("button", { disabled: busy, onClick: () => run(async () => {
+        }, "ignorata"), style: { ...secondaryBtnStyle, color: C.inkSoft } }, "Ignora")
+      )
+    )
+  );
+}
+function SegnalazioniScreen({ isAdmin }) {
+  const h = React.createElement;
+  const [reports, setReports] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let alive = true;
+    loadSharedReports().then((list) => {
+      if (alive) setReports(list);
+    }).catch(() => {
+      if (alive) setLoadError(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isAdmin]);
+  if (!isAdmin) {
+    return h(
+      "div",
+      { style: { maxWidth: 640 } },
+      h(PageHeader, { title: "Segnalazioni", subtitle: "Qui il tutor rivede gli errori segnalati." }),
+      h("p", { style: { color: C.inkSoft, lineHeight: 1.6 } }, "Se trovi qualcosa che non va in un testo (Riassunto, Testo facile, Formulario o Dizionario), usa il pulsante \xABSegnala un errore\xBB che compare sotto il testo generato. Ci pensa il tutor a controllarlo e a correggerlo per tutti.")
+    );
+  }
+  const open = reports ? reports.filter((r) => r.status === "aperta") : [];
+  const current = openId ? open.find((r) => r.id === openId) : null;
+  if (current) {
+    return h(ReportDetail, {
+      key: current.id,
+      report: current,
+      onBack: () => setOpenId(null),
+      onDone: (id) => {
+        setReports((prev) => prev.map((r) => r.id === id ? { ...r, status: "chiusa" } : r));
+        setOpenId(null);
+      }
+    });
+  }
+  return h(
+    "div",
+    { style: { maxWidth: 760 } },
+    h(PageHeader, { title: "Segnalazioni", subtitle: reports ? `${open.length} da rivedere.` : "Carico le segnalazioni\u2026" }),
+    loadError && h(ErrorBanner, { text: "Non riesco a caricare le segnalazioni. Controlla la connessione e riprova." }),
+    reports && open.length === 0 && h("p", { style: { color: C.inkSoft } }, "Nessuna segnalazione da rivedere. \u{1F44D}"),
+    h(
+      "div",
+      { style: { display: "flex", flexDirection: "column", gap: 10 } },
+      open.map((r) => h(
+        "button",
+        { key: r.id, onClick: () => setOpenId(r.id), style: { textAlign: "left", background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer", fontFamily: FONT } },
+        h("div", { style: { fontSize: "calc(0.78em * var(--fs))", color: C.inkSoft, marginBottom: 3 } }, `${REPORT_KIND_LABELS[r.kind] || r.kind} \xB7 ${formatReportDate(r.createdAt)}`),
+        h("div", { style: { fontWeight: 700, color: C.ink } }, r.topic || "senza titolo"),
+        r.note && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.88em * var(--fs))", marginTop: 4 } }, r.note)
+      ))
+    )
+  );
+}
+/* ---------- Voce di lettura ---------- */
+const VOICE_SAMPLE = "Ciao! Questa \xE8 la voce che legger\xE0 i tuoi testi. Ti piace come suona?";
+function previewVoice(voice) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  setTimeout(() => {
+    const u = new window.SpeechSynthesisUtterance(VOICE_SAMPLE);
+    if (voice) {
+      u.voice = voice;
+      u.lang = voice.lang;
+    } else {
+      u.lang = "it-IT";
+    }
+    u.rate = speedPref.rate;
+    window.speechSynthesis.speak(u);
+  }, 80);
+}
+function VoceScreen() {
+  const h = React.createElement;
+  const voices = useVoices();
+  const [chosen, setChosen] = useState(voicePref.uri);
+  const [fast, setFast] = useState(speedPref.rate >= SPEECH_RATE_FAST);
+  const [showAll, setShowAll] = useState(false);
+  const supported = typeof window !== "undefined" && !!window.speechSynthesis;
+  useEffect(() => {
+    let alive = true;
+    Promise.all([loadVoicePref(), loadSpeedPref()]).then(() => {
+      if (!alive) return;
+      setChosen(voicePref.uri);
+      setFast(speedPref.rate >= SPEECH_RATE_FAST);
+    });
+    return () => {
+      alive = false;
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    };
+  }, []);
+  const isIt = (v) => !!(v.lang && v.lang.toLowerCase().startsWith("it"));
+  const itVoices = voices.filter(isIt);
+  const otherVoices = voices.filter((v) => !isIt(v));
+  const autoVoice = itVoices.find((v) => v.localService === false) || itVoices[0] || null;
+  const choose = (uri, voice) => {
+    saveVoicePref(uri);
+    setChosen(uri);
+    previewVoice(voice);
+  };
+  const setSpeed = (isFast) => {
+    saveSpeedPref(isFast ? SPEECH_RATE_FAST : SPEECH_RATE_NORMAL);
+    setFast(isFast);
+  };
+  const accent = C.plum;
+  const optionStyle = (selected) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    textAlign: "left",
+    background: selected ? accent + "14" : C.card,
+    border: `1.5px solid ${selected ? accent : C.border}`,
+    borderRadius: 14,
+    padding: "11px 14px",
+    cursor: "pointer",
+    fontFamily: FONT,
+    color: C.ink
+  });
+  const radio = (selected) => h("span", { style: { width: 18, height: 18, borderRadius: "50%", border: `2px solid ${selected ? accent : C.border}`, background: selected ? accent : "transparent", boxShadow: selected ? "inset 0 0 0 3px #fff" : "none", flexShrink: 0 } });
+  const voiceRow = (v) => {
+    const selected = chosen === v.voiceURI;
+    return h(
+      "div",
+      { key: v.voiceURI, style: { display: "flex", gap: 8, alignItems: "stretch" } },
+      h(
+        "button",
+        { onClick: () => choose(v.voiceURI, v), style: { ...optionStyle(selected), flex: 1 }, "aria-pressed": selected },
+        radio(selected),
+        h("span", { style: { flex: 1, minWidth: 0 } }, h("div", { style: { fontWeight: 700, fontSize: "calc(0.92em * var(--fs))" } }, v.name), h("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))" } }, v.localService === false ? "Voce di rete: di solito suona pi\xF9 naturale" : "Voce del dispositivo"))
+      ),
+      h("button", { onClick: () => previewVoice(v), "aria-label": `Prova la voce ${v.name}`, style: { ...secondaryBtnStyle, padding: "6px 12px" } }, h(Volume2, { size: 15 }), " Prova")
+    );
+  };
+  const sectionTitle = (t) => h("div", { style: { fontWeight: 700, color: C.ink, margin: "22px 0 10px", fontSize: "calc(0.95em * var(--fs))" } }, t);
+  return h(
+    "div",
+    { style: { maxWidth: 640 } },
+    h(PageHeader, { title: "Voce di lettura", subtitle: "Scegli la voce e la velocit\xE0 con cui ti leggo i testi." }),
+    !supported && h("p", { style: { color: C.wine } }, "Il tuo browser non supporta la lettura vocale."),
+    supported && h(
+      React.Fragment,
+      null,
+      sectionTitle("Velocit\xE0"),
+      h(
+        "div",
+        { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        h("button", { onClick: () => setSpeed(false), "aria-pressed": !fast, style: { ...secondaryBtnStyle, background: !fast ? C.ink : C.card, color: !fast ? "#FBFAF4" : C.ink, borderColor: !fast ? C.ink : C.border } }, "Normale"),
+        h("button", { onClick: () => setSpeed(true), "aria-pressed": fast, style: { ...secondaryBtnStyle, background: fast ? C.ink : C.card, color: fast ? "#FBFAF4" : C.ink, borderColor: fast ? C.ink : C.border } }, "Veloce (1,2\xD7)")
+      ),
+      sectionTitle("Voce"),
+      h(
+        "div",
+        { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        h(
+          "div",
+          { style: { display: "flex", gap: 8, alignItems: "stretch" } },
+          h("button", { onClick: () => choose(null, autoVoice), style: { ...optionStyle(!chosen), flex: 1 }, "aria-pressed": !chosen }, radio(!chosen), h("span", { style: { flex: 1 } }, h("div", { style: { fontWeight: 700, fontSize: "calc(0.92em * var(--fs))" } }, "Automatica (consigliata)"), h("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))" } }, autoVoice ? `Ora user\xE0: ${autoVoice.name}` : "Sceglie la migliore voce italiana disponibile"))),
+          h("button", { onClick: () => previewVoice(autoVoice), style: { ...secondaryBtnStyle, padding: "6px 12px" } }, h(Volume2, { size: 15 }), " Prova")
+        ),
+        itVoices.map(voiceRow),
+        itVoices.length === 0 && h("p", { style: { color: C.inkSoft, fontSize: "calc(0.88em * var(--fs))", margin: "4px 2px" } }, "Non trovo voci italiane su questo dispositivo. Puoi provare a mostrare anche quelle di altre lingue."),
+        otherVoices.length > 0 && h("button", { onClick: () => setShowAll((v) => !v), style: { ...secondaryBtnStyle, alignSelf: "flex-start" } }, showAll ? "Nascondi le altre lingue" : `Mostra anche le altre lingue (${otherVoices.length})`),
+        showAll && otherVoices.map(voiceRow)
+      ),
+      h("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", marginTop: 18, lineHeight: 1.5 } }, "La scelta vale per tutte le sezioni con il pulsante \xABAscolta\xBB e resta salvata su questo dispositivo. Le voci disponibili dipendono dal telefono o dal computer che usi.")
+    )
+  );
+}
 function HighlightBar({ containerRef, highlights, onChange }) {
   const pendingRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -23258,6 +23833,8 @@ Spiega il termine: "${term}"`,
   if (status === "result") {
     const mapTopic = titleFromText(result, text.trim() || "Argomento");
     const puoiSelezionare = sectionId !== "formulario";
+    const reportTrimmed = text.trim();
+    const reportCacheKey = !image && reportTrimmed && reportTrimmed.length <= 60 ? `${sectionId}:${normalizeTopic(reportTrimmed)}` : null;
     return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: showMapSplit ? "none" : 760 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle: titleFromText(result, "") }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       SpeakButton,
       {
@@ -23324,7 +23901,18 @@ Spiega il termine: "${term}"`,
       },
       /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }),
       " Nuova generazione"
-    )), showMapSplit && /* @__PURE__ */ React.createElement("div", { style: { flex: "1 1 420px", minWidth: 0, background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(ReportBox, {
+      kind: sectionId,
+      topic: reportTrimmed || titleFromText(result, "Argomento"),
+      cacheKey: reportCacheKey,
+      content: result,
+      onForgetLocal: (key) => setTopicCache((prev) => {
+        const n = { ...prev };
+        delete n[key];
+        saveTopicCache(n);
+        return n;
+      })
+    })), showMapSplit && /* @__PURE__ */ React.createElement("div", { style: { flex: "1 1 420px", minWidth: 0, background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16 } }, /* @__PURE__ */ React.createElement(
       MappaWebScreen,
       {
         embedded: true,
@@ -23452,7 +24040,18 @@ Nel campo "alternative" (array, pu\xF2 essere vuoto) elenca SOLO se la forma scr
     },
     /* @__PURE__ */ React.createElement(Save, { size: 16 }),
     " Salva"
-  )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 cercata da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: alternative.length > 0 ? 16 : 0 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: voce })), alternative.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8, fontSize: "calc(0.9em * var(--fs))" } }, "Questa forma potrebbe anche essere:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, alternative.map((a, i) => /* @__PURE__ */ React.createElement("button", { key: i, onClick: () => generate(a.forma), style: { ...secondaryBtnStyle, flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "8px 13px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, a.forma), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "calc(0.82em * var(--fs))", color: C.inkSoft, fontWeight: 400 } }, a.info)))))));
+  )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 cercata da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: alternative.length > 0 ? 16 : 0 } }, /* @__PURE__ */ React.createElement(FormattedText, { text: voce })), alternative.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8, fontSize: "calc(0.9em * var(--fs))" } }, "Questa forma potrebbe anche essere:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, alternative.map((a, i) => /* @__PURE__ */ React.createElement("button", { key: i, onClick: () => generate(a.forma), style: { ...secondaryBtnStyle, flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "8px 13px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, a.forma), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "calc(0.82em * var(--fs))", color: C.inkSoft, fontWeight: 400 } }, a.info))))), /* @__PURE__ */ React.createElement(ReportBox, {
+    kind: "dizionario",
+    topic: `${lingua} \u2014 ${word}`,
+    cacheKey: `dizionario:${lingua}:${normalizeTopic(word)}`,
+    content: voce,
+    onForgetLocal: (key) => setTopicCache((prev) => {
+      const n = { ...prev };
+      delete n[key];
+      saveTopicCache(n);
+      return n;
+    })
+  })));
 }
 function ArchivioViewerModal({ item, onClose }) {
   let parsed = null;
@@ -24848,7 +25447,56 @@ Rispondi SEMPRE seguendo questo schema, con questi titoli esatti su una riga a s
 ### DOMANDA
 ${ultima ? "### VALUTAZIONE_FINALE" : ""}`;
 }
-function InterrogazioneScreen({ onSave }) {
+function savedMapsFromArchivio(archivio, argomento) {
+  const out = [];
+  (archivio || []).forEach((it) => {
+    let data = null;
+    if (it.type === "mappa") {
+      try {
+        data = JSON.parse(it.content);
+      } catch {
+        data = null;
+      }
+    } else if (it.mapData && Array.isArray(it.mapData.branches) && it.mapData.branches.length) {
+      data = it.mapData;
+    }
+    if (!data || !Array.isArray(data.branches)) return;
+    out.push({
+      id: it.id,
+      title: data.topic || it.title || "Mappa",
+      source: it.type === "mappa" ? "Mappa mentale" : "Mappa accanto al riassunto",
+      data,
+      savedAt: it.savedAt || 0
+    });
+  });
+  const words = normalizeTopic(argomento || "").split(/\s+/).filter((w) => w.length > 2);
+  const score = (m) => {
+    const t = normalizeTopic(`${m.title} ${(m.data.branches || []).map((b) => b.text || "").join(" ")}`);
+    return words.filter((w) => t.includes(w)).length;
+  };
+  return out.map((m) => ({ ...m, score: score(m) })).sort((a, b) => b.score - a.score || b.savedAt - a.savedAt);
+}
+function MapPicker({ maps, onPick, onClose }) {
+  const h = React.createElement;
+  return h(
+    "div",
+    { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 12 } },
+    h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 } }, h("div", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.95em * var(--fs))" } }, "Scegli una mappa salvata"), h("button", { onClick: onClose, "aria-label": "Chiudi la scelta della mappa", style: { ...secondaryBtnStyle, padding: "5px 10px" } }, "Annulla")),
+    maps.length === 0 ? h("p", { style: { color: C.inkSoft, margin: 0, lineHeight: 1.5, fontSize: "calc(0.9em * var(--fs))" } }, "Non hai ancora mappe salvate. Creane una in \xABMappa mentale\xBB (o accanto a un riassunto) e premi \xABSalva\xBB: la ritroverai qui.") : h(
+      "div",
+      { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 300, overflowY: "auto" } },
+      maps.map((m) => h(
+        "button",
+        { key: m.id, onClick: () => onPick(m), style: { textAlign: "left", background: m.score > 0 ? C.peachSoft : C.paper, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", cursor: "pointer", fontFamily: FONT, color: C.ink } },
+        h("div", { style: { fontWeight: 700 } }, m.title),
+        h("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", marginTop: 2 } }, `${m.source} \xB7 ${m.data.branches.length} ${m.data.branches.length === 1 ? "ramo" : "rami"}${m.score > 0 ? " \xB7 sull'argomento" : ""}`)
+      ))
+    )
+  );
+}
+const INTERR_SPLIT_CSS = ".interr-split{display:flex;gap:16px;align-items:flex-start}.interr-split>.interr-chat{flex:1 1 380px;min-width:0}.interr-split>.interr-map{flex:1 1 420px;min-width:0;max-height:calc(100vh - 64px);overflow:auto;background:" + C.card + ";border:1px solid " + C.border + ";border-radius:16px;padding:14px;box-sizing:border-box}@media (max-width:820px){.interr-split{flex-direction:column;align-items:stretch}.interr-split>.interr-map{order:-1;max-height:46vh;flex:none}.interr-split>.interr-chat{flex:none}}";
+const INTERR_READ_KEY = "chiarostudio-interr-lettura";
+function InterrogazioneScreen({ onSave, archivio = [] }) {
   const [image, setImage] = useState(null);
   const [argomento, setArgomento] = useState("");
   const [tier, setTier] = useState("veloce");
@@ -24863,6 +25511,58 @@ function InterrogazioneScreen({ onSave }) {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [turni, status]);
+  const [autoRead, setAutoRead] = useState(() => {
+    try {
+      return window.localStorage.getItem(INTERR_READ_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [mappa, setMappa] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const voce = useSpeech();
+  const lastReadRef = useRef(-1);
+  const mapsList = savedMapsFromArchivio(archivio, argomento);
+  const toggleAutoRead = () => {
+    const next = !autoRead;
+    setAutoRead(next);
+    try {
+      window.localStorage.setItem(INTERR_READ_KEY, next ? "1" : "0");
+    } catch {
+    }
+    if (!next) voce.stop();
+  };
+  useEffect(() => {
+    if (!autoRead || status === "done") return;
+    const idx = turni.length - 1;
+    const t = turni[idx];
+    if (!t || t.ruolo !== "insegnante" || idx <= lastReadRef.current) return;
+    lastReadRef.current = idx;
+    voce.speak(t.testo);
+  }, [turni, autoRead, status]);
+  useEffect(() => {
+    if (status !== "done" || !autoRead || !valutazioneFinale) return;
+    const idx = turni.length - 1;
+    const t = turni[idx];
+    const fb = t && t.ruolo === "insegnante" && idx > lastReadRef.current ? t.testo + "\n\n" : "";
+    lastReadRef.current = idx;
+    voce.speak(fb + valutazioneFinale);
+  }, [status, valutazioneFinale]);
+  const pickMap = (m) => {
+    setMappa({ id: m.id, title: m.title, data: m.data });
+    setPickerOpen(false);
+  };
+  const mapControls = (inChat) => /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 } }, inChat && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: toggleAutoRead,
+      "aria-pressed": autoRead,
+      title: "Leggi ad alta voce ogni nuova domanda",
+      style: { ...secondaryBtnStyle, padding: "7px 12px", background: autoRead ? "#6B5B95" : C.card, color: autoRead ? "#FBFAF4" : C.ink, borderColor: autoRead ? "#6B5B95" : C.border }
+    },
+    /* @__PURE__ */ React.createElement(Volume2, { size: 15 }),
+    autoRead ? " Lettura domande: s\xEC" : " Lettura domande: no"
+  ), inChat && voce.speaking && /* @__PURE__ */ React.createElement("button", { onClick: () => voce.stop(), style: { ...secondaryBtnStyle, padding: "7px 12px" } }, /* @__PURE__ */ React.createElement(Square, { size: 13 }), " Ferma la voce"), /* @__PURE__ */ React.createElement("button", { onClick: () => setPickerOpen((v) => !v), style: { ...secondaryBtnStyle, padding: "7px 12px" } }, /* @__PURE__ */ React.createElement(Network, { size: 15 }), mappa ? " Cambia mappa" : inChat ? " Apri una mappa" : " Tieni aperta una mappa (facoltativo)"), mappa && /* @__PURE__ */ React.createElement("button", { onClick: () => setMappa(null), style: { ...secondaryBtnStyle, padding: "7px 12px", color: C.inkSoft } }, /* @__PURE__ */ React.createElement(X, { size: 14 }), inChat ? " Chiudi mappa" : ` Togli \xAB${mappa.title}\xBB`)), pickerOpen && /* @__PURE__ */ React.createElement(MapPicker, { maps: mapsList, onPick: pickMap, onClose: () => setPickerOpen(false) }));
   const handlePick = async (file) => {
     try {
       const img = await fileToCompressedImage(file);
@@ -24873,6 +25573,7 @@ function InterrogazioneScreen({ onSave }) {
   };
   const messagesFromTurni = (list) => list.map((t) => ({ role: t.ruolo === "studente" ? "user" : "assistant", text: t.testo }));
   const iniziaInterrogazione = async () => {
+    lastReadRef.current = -1;
     setStatus("loading");
     setError("");
     try {
@@ -24891,6 +25592,7 @@ function InterrogazioneScreen({ onSave }) {
   const inviaRisposta = async () => {
     const risposta = rispostaCorrente.trim();
     if (!risposta) return;
+    voce.stop();
     const nuoviTurni = [...turni, { ruolo: "studente", testo: risposta }];
     setTurni(nuoviTurni);
     setRispostaCorrente("");
@@ -24943,7 +25645,8 @@ function InterrogazioneScreen({ onSave }) {
           lineHeight: 1.6
         }
       },
-      /* @__PURE__ */ React.createElement(FormattedText, { text: valutazioneFinale })
+      /* @__PURE__ */ React.createElement(FormattedText, { text: valutazioneFinale }),
+      /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement(SpeakButton, { text: valutazioneFinale, color: "#6B5B95", label: "Ascolta la valutazione" }))
     ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -24961,9 +25664,12 @@ function InterrogazioneScreen({ onSave }) {
       "button",
       {
         onClick: () => {
+          voce.stop();
+          lastReadRef.current = -1;
           setStatus("setup");
           setTurni([]);
           setArgomento("");
+          setValutazioneFinale("");
         },
         style: secondaryBtnStyle
       },
@@ -24972,7 +25678,7 @@ function InterrogazioneScreen({ onSave }) {
     )));
   }
   if (status === "chat" || status === "loading" && turni.length > 0) {
-    return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 700, display: "flex", flexDirection: "column", height: "calc(100vh - 64px)" } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Interrogazione", subtitle: `${argomento || "Dalla foto"} \u2014 domanda ${Math.min(numeroFatte + 1, numeroTotale)} di ${numeroTotale} \u2014 modalit\xE0 ${tier === "veloce" ? "veloce" : "approfondita"}` }), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", marginBottom: 14, paddingRight: 4 } }, turni.map((t, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: t.ruolo === "studente" ? "flex-end" : "flex-start", marginBottom: 10 } }, /* @__PURE__ */ React.createElement(
+    const chatColumn = /* @__PURE__ */ React.createElement("div", { className: mappa ? "interr-chat" : void 0, style: { maxWidth: mappa ? void 0 : 700, display: "flex", flexDirection: "column", height: "calc(100vh - 64px)" } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Interrogazione", subtitle: `${argomento || "Dalla foto"} \u2014 domanda ${Math.min(numeroFatte + 1, numeroTotale)} di ${numeroTotale} \u2014 modalit\xE0 ${tier === "veloce" ? "veloce" : "approfondita"}` }), mapControls(true), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", marginBottom: 14, paddingRight: 4 } }, turni.map((t, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: t.ruolo === "studente" ? "flex-end" : "flex-start", marginBottom: 10 } }, /* @__PURE__ */ React.createElement(
       "div",
       {
         style: {
@@ -25021,6 +25727,17 @@ function InterrogazioneScreen({ onSave }) {
       },
       "Invia"
     )));
+    if (!mappa) return chatColumn;
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("style", null, INTERR_SPLIT_CSS), /* @__PURE__ */ React.createElement("div", { className: "interr-split" }, chatColumn, /* @__PURE__ */ React.createElement("div", { className: "interr-map" }, /* @__PURE__ */ React.createElement(
+      MappaWebScreen,
+      {
+        key: mappa.id,
+        embedded: true,
+        initialData: mappa.data,
+        onDataChange: (data) => setMappa((m) => m ? { ...m, data } : m),
+        onSave: (data) => onSave({ type: "mappa", title: data.topic || "Mappa", content: JSON.stringify(data), materia: "" })
+      }
+    ))));
   }
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Interrogazione", subtitle: "Un dialogo vero: l'AI ti fa domande a catena, come farebbe un insegnante, e alla fine ti d\xE0 una valutazione complessiva." }), error && /* @__PURE__ */ React.createElement(ErrorBanner, { text: error }), /* @__PURE__ */ React.createElement(ImagePicker, { image, onPick: handlePick, onClear: () => setImage(null) }), /* @__PURE__ */ React.createElement("div", { style: { position: "relative", marginBottom: 16 } }, /* @__PURE__ */ React.createElement(
     "input",
@@ -25062,7 +25779,7 @@ function InterrogazioneScreen({ onSave }) {
       }
     },
     n
-  )))), /* @__PURE__ */ React.createElement(
+  )))), mapControls(false), mappa && !pickerOpen && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", margin: "-4px 0 14px" } }, `La mappa \xAB${mappa.title}\xBB resta aperta accanto alle domande.`), /* @__PURE__ */ React.createElement(
     PrimaryButton,
     {
       onClick: iniziaInterrogazione,
@@ -25078,6 +25795,9 @@ const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 sempl
 const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Questi studenti spesso fanno fatica a memorizzare i termini tecnici e a visualizzarli mentalmente: ogni volta che usi un termine tecnico (es. "discriminante", "disequazione", "coefficiente", "verso della disuguaglianza"), spiegalo subito con parole semplici e concrete, non darlo mai per scontato. Non avere fretta di essere breve: \xE8 molto meglio una frase in pi\xF9 che spiega bene, piuttosto che una definizione telegrafica che lo studente non riesce a seguire. Elenca le formule rilevanti con "- ", spiegando ogni simbolo in modo chiaro e comprensibile, con un esempio concreto se aiuta a capire. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", spiegando con calma, con parole semplici, cosa si fa e perch\xE9 \u2014 come se lo spiegassi a voce a uno studente che ha bisogno di tempo per capire, non come una lista di operazioni. Rispondi solo con il formulario.';
 const SUBSCRIPTION_GATING_ENABLED = false;
 const PAID_SECTIONS = ["facile", "formulario", "flashcard", "interrogazione", "mappe", "dizionario"];
+function isUserAdmin(clerkUser) {
+  return !!(clerkUser && clerkUser.publicMetadata && clerkUser.publicMetadata.admin === true);
+}
 function isUserSubscribed(clerkUser) {
   return !!(clerkUser && clerkUser.publicMetadata && clerkUser.publicMetadata.abbonato === true);
 }
@@ -25140,7 +25860,21 @@ function App() {
   const [clerkError, setClerkError] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    loadVoicePref();
+    loadSpeedPref();
+  }, []);
   const [flashcardLaunch, setFlashcardLaunch] = useState(null);
+  useEffect(() => {
+    window.__chiaroBack = () => {
+      if (active !== "home") {
+        setActive("home");
+        return true;
+      }
+      return false;
+    };
+  }, [active]);
   const [retryCount, setRetryCount] = useState(0);
   const openSavedText = (item) => {
     const hasMap = !!(item.mapData && item.mapData.branches && item.mapData.branches.length);
@@ -25189,9 +25923,11 @@ function App() {
       setClerkReady(true);
       setIsSignedIn(!!clerk.user && !!clerk.session);
       setIsSubscribed(isUserSubscribed(clerk.user));
+      setIsAdmin(isUserAdmin(clerk.user));
       clerk.addListener(({ user, session }) => {
         setIsSignedIn(!!user && !!session);
         setIsSubscribed(isUserSubscribed(user));
+        setIsAdmin(isUserAdmin(user));
       });
     }).catch(() => {
       if (!alive) return;
@@ -25340,7 +26076,7 @@ function App() {
   } else if (active === "quiz") {
     content = /* @__PURE__ */ React.createElement(QuizWebScreen, { onSave: addToArchivio });
   } else if (active === "interrogazione") {
-    content = /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio });
+    content = /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio });
   } else if (active === "mappe") {
     content = /* @__PURE__ */ React.createElement(
       MappaWebScreen,
@@ -25353,9 +26089,9 @@ function App() {
   } else if (active === "archivio") {
     content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck, onOpenText: openSavedText });
   } else if (active === "voce") {
-    content = /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Voce di lettura", subtitle: "In arrivo in questa versione del sito." }));
+    content = /* @__PURE__ */ React.createElement(VoceScreen, null);
   } else if (active === "segnalazioni") {
-    content = /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Segnalazioni", subtitle: "In arrivo in questa versione del sito." }));
+    content = /* @__PURE__ */ React.createElement(SegnalazioniScreen, { isAdmin });
   }
   return /* @__PURE__ */ React.createElement("div", { style: { "--fs": fontScale, display: "flex", minHeight: "100vh", background: C.paper, fontFamily: FONT } }, /* @__PURE__ */ React.createElement("style", null, `
         @keyframes chiaro-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
