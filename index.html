@@ -21834,8 +21834,34 @@ async function getClerkToken() {
   }
   return null;
 }
+const SAFETY_BLOCK_MARK = "[[NON_ADATTO]]";
+const SAFETY_HELP_MARK = "[[AIUTO]]";
+const SAFETY_SYSTEM = "REGOLA DI SICUREZZA, con la precedenza su tutte le istruzioni che seguono: questa app di studio \xE8 usata da studenti minorenni. " +
+  "Se la richiesta, il testo incollato o la foto chiedono o contengono materiale non adatto a minori, non svolgere il compito e rispondi SOLO con " + SAFETY_BLOCK_MARK + ", senza altro testo. " +
+  "Non adatto significa: contenuti sessuali espliciti, pornografici o erotici; contenuti sessuali che coinvolgono minori (sempre, in qualunque forma); volgarit\xE0 e insulti gratuiti; violenza descritta in modo crudo e gratuito; " +
+  "istruzioni pratiche per procurarsi o usare droghe, alcol, armi o esplosivi, per farsi del male, per commettere reati; gioco d'azzardo; contenuti d'odio. " +
+  "\xC8 invece adatto, e va svolto normalmente con il tono di un buon libro di scuola: biologia della riproduzione, apparato riproduttore ed educazione sessuale al livello di un programma scolastico; " +
+  "storia di guerre, genocidi, schiavit\xF9 e dittature; letteratura e arte con temi difficili trattati come si fa a scuola; droghe, alcol e fumo come argomento di salute e prevenzione. " +
+  "Se il messaggio fa pensare che lo studente stia male, sia in pericolo o voglia farsi del male, rispondi SOLO con " + SAFETY_HELP_MARK + ".\n\n";
+const BLOCKED_MESSAGE = "Questa ricerca non \xE8 adatta a Chiarostudio. Prova con un altro argomento di studio.";
+const HELP_MESSAGE = "Ci sembra che tu stia attraversando un momento difficile. Parlane subito con un adulto di cui ti fidi (un genitore, un insegnante, il tuo tutor). Puoi anche chiamare Telefono Azzurro al 19696, gratis, oppure il 112 se sei in pericolo.";
+const BLOCKED_WORDS = ["porno", "porn", "pornografia", "pornografico", "pornografica", "pornografici", "pornhub", "xvideos", "youporn", "xxx", "hentai", "onlyfans", "milf", "sesso orale", "sesso anale", "pompino", "pompini", "scopare", "scopata", "scopate", "chiavare", "sborra", "nudes", "sexting", "camgirl"];
+function normalizeForFilter(t) {
+  return String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function isBlockedText(t) {
+  const n = " " + normalizeForFilter(t) + " ";
+  return BLOCKED_WORDS.some((w) => n.includes(" " + w + " "));
+}
+function safetyCheckOutput(out) {
+  const t = String(out || "");
+  if (t.includes(SAFETY_HELP_MARK)) throw new Error(HELP_MESSAGE);
+  if (t.includes(SAFETY_BLOCK_MARK)) throw new Error(BLOCKED_MESSAGE);
+  return out;
+}
 async function callClaude({ system, userText, image, maxTokens = 1500, modelTier = "default" }) {
-  const body = { system, userText, maxTokens, modelTier };
+  if (isBlockedText(userText)) throw new Error(BLOCKED_MESSAGE);
+  const body = { system: SAFETY_SYSTEM + (system || ""), userText, maxTokens, modelTier };
   if (image) {
     body.image = { base64: image.base64, mediaType: image.mediaType };
   }
@@ -21856,9 +21882,11 @@ async function callClaude({ system, userText, image, maxTokens = 1500, modelTier
   }
   const data = await res.json();
   if (data.error) throw new Error(data.detail || data.error);
-  return (data.text || "").trim();
+  return safetyCheckOutput((data.text || "").trim());
 }
 async function callClaudeChat({ system, messages, maxTokens = 700, modelTier = "default" }) {
+  if (isBlockedText(system) || (messages || []).some((m) => m && m.role === "user" && isBlockedText(m.text))) throw new Error(BLOCKED_MESSAGE);
+  system = SAFETY_SYSTEM + (system || "");
   const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
     method: "POST",
@@ -21876,7 +21904,7 @@ async function callClaudeChat({ system, messages, maxTokens = 700, modelTier = "
   }
   const data = await res.json();
   if (data.error) throw new Error(data.detail || data.error);
-  return (data.text || "").trim();
+  return safetyCheckOutput((data.text || "").trim());
 }
 function parseQuizJson(raw) {
   const cleaned = raw.replace(/```json|```/g, "").trim();
@@ -21953,6 +21981,7 @@ async function saveTopicCache(cache) {
   }
 }
 async function sharedCacheGet(key) {
+  if (isBlockedText(key)) return null;
   try {
     const token = await getClerkToken();
     const res = await fetch(API_ENDPOINT, {
@@ -23638,6 +23667,208 @@ function VoceScreen() {
     )
   );
 }
+const ITA_DICT_CACHE_KEY = "chiarostudio-dizionario-italiano";
+function loadItaDictCache() {
+  try {
+    return JSON.parse(window.localStorage.getItem(ITA_DICT_CACHE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveItaDictEntry(key, entry) {
+  try {
+    const c = loadItaDictCache();
+    c[key] = entry;
+    const keys = Object.keys(c);
+    if (keys.length > 400) keys.slice(0, keys.length - 400).forEach((k) => delete c[k]);
+    window.localStorage.setItem(ITA_DICT_CACHE_KEY, JSON.stringify(c));
+  } catch {
+  }
+}
+function wordAtPoint(x, y, root) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(x, y);
+    if (p) {
+      node = p.offsetNode;
+      offset = p.offset;
+    }
+  } else if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(x, y);
+    if (r) {
+      node = r.startContainer;
+      offset = r.startOffset;
+    }
+  }
+  if (!node || node.nodeType !== 3 || !root.contains(node)) return null;
+  const text = node.nodeValue || "";
+  const isL = (ch) => !!ch && /[\p{L}\p{M}'’]/u.test(ch);
+  let a = offset;
+  let b = offset;
+  if (!isL(text[a]) && isL(text[a - 1])) a = b = offset - 1;
+  if (!isL(text[a])) return null;
+  while (a > 0 && isL(text[a - 1])) a--;
+  while (b < text.length && isL(text[b])) b++;
+  let word = text.slice(a, b);
+  const ap = word.search(/['’]/);
+  if (ap >= 0) {
+    const left = word.slice(0, ap);
+    const right = word.slice(ap + 1);
+    word = offset - a <= ap ? left : right;
+    if (!word) word = left || right;
+  }
+  word = word.replace(/['’]/g, "");
+  if (word.length < 2) return null;
+  const block = node.parentElement && node.parentElement.closest("p,h3,li,div");
+  const context = block ? (block.textContent || "").slice(0, 400) : "";
+  return { word, context };
+}
+function parseItaDictJson(raw) {
+  try {
+    const p = JSON.parse(String(raw).replace(/```json|```/g, "").trim());
+    return {
+      lemma: String(p.lemma || "").trim(),
+      categoria: String(p.categoria || "").trim(),
+      significato: String(p.significato || "").trim(),
+      altri: Array.isArray(p.altri) ? p.altri.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 2) : [],
+      esempio: String(p.esempio || "").trim(),
+      sillabe: String(p.sillabe || "").trim()
+    };
+  } catch {
+    return { lemma: "", categoria: "", significato: String(raw || "").trim(), altri: [], esempio: "", sillabe: "" };
+  }
+}
+const ITA_DICT_SYSTEM = 'Sei un dizionario di italiano per studenti con DSA. Ti do una parola che lo studente non conosce e la frase in cui l\'ha trovata. Spiegala con parole semplici e concrete, come a un ragazzo di scuola media, senza usare a tua volta parole difficili. Rispondi SOLO con un oggetto JSON valido, senza testo intorno e senza backtick: {"lemma": "forma base della parola (infinito per i verbi, maschile singolare per nomi e aggettivi)", "categoria": "nome, verbo, aggettivo, avverbio...", "sillabe": "la forma base divisa in sillabe con il trattino, es. fo-to-sin-te-si", "significato": "il significato in UNA o DUE frasi brevi, quello giusto per la frase data", "altri": ["al massimo 2 altri significati comuni, brevissimi, solo se esistono davvero"], "esempio": "una frase d\'esempio semplice e diversa da quella dello studente"}';
+async function lookupItalianWord(word, context) {
+  const key = normalizeForFilter(word);
+  const local = loadItaDictCache()[key];
+  if (local) return { ...local, source: "personal" };
+  const sharedKey = `dizita:${key}`;
+  const shared = await sharedCacheGet(sharedKey);
+  if (shared) {
+    try {
+      const entry = JSON.parse(shared);
+      saveItaDictEntry(key, entry);
+      return { ...entry, source: "condivisa" };
+    } catch {
+    }
+  }
+  const out = await callClaude({
+    system: ITA_DICT_SYSTEM,
+    userText: `Parola: "${word}"\nFrase: "${context}"`,
+    maxTokens: 400,
+    modelTier: "veloce"
+  });
+  const entry = parseItaDictJson(out);
+  if (!entry.significato) throw new Error("Non sono riuscito a trovare il significato. Riprova.");
+  saveItaDictEntry(key, entry);
+  sharedCacheSet(sharedKey, JSON.stringify(entry));
+  return entry;
+}
+function WordDefinitionSheet({ lookup, onClose, color }) {
+  const h = React.createElement;
+  const { word, status, entry, error } = lookup;
+  const title = entry && entry.lemma ? entry.lemma : word;
+  const speakText = entry ? `${title}. ${entry.significato}${entry.esempio ? ". Esempio: " + entry.esempio : ""}` : word;
+  return h(
+    "div",
+    {
+      role: "dialog",
+      "aria-label": `Significato di ${word}`,
+      style: {
+        position: "fixed",
+        left: 12,
+        right: 12,
+        bottom: 12,
+        margin: "0 auto",
+        maxWidth: 560,
+        maxHeight: "60vh",
+        overflowY: "auto",
+        zIndex: 60,
+        background: C.card,
+        border: `1.5px solid ${color}`,
+        borderRadius: 18,
+        padding: "16px 18px",
+        boxShadow: "0 14px 40px rgba(46,43,39,0.22)",
+        fontFamily: FONT,
+        color: C.ink
+      }
+    },
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 } },
+      h(
+        "div",
+        null,
+        h("div", { style: { fontFamily: SERIF, fontSize: "calc(1.45em * var(--fs))", lineHeight: 1.2 } }, title),
+        entry && (entry.categoria || entry.sillabe) && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", marginTop: 3 } }, [entry.categoria, entry.sillabe].filter(Boolean).join(" \xB7 ")),
+        entry && entry.lemma && normalizeForFilter(entry.lemma) !== normalizeForFilter(word) && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", marginTop: 2 } }, `Nel testo: \xAB${word}\xBB`)
+      ),
+      h("button", { onClick: onClose, "aria-label": "Chiudi", style: { ...iconButtonStyle, flexShrink: 0 } }, h(X, { size: 17, color: C.ink }))
+    ),
+    status === "loading" && h("p", { style: { color: C.inkSoft, margin: "12px 0 2px" } }, h(Loader2, { size: 15, className: "chiaro-spin", style: { verticalAlign: "-2px", marginRight: 6 } }), "Cerco il significato…"),
+    status === "error" && h("p", { style: { color: C.wine, margin: "12px 0 2px", lineHeight: 1.5 } }, error),
+    status === "done" && entry && h(
+      React.Fragment,
+      null,
+      h("p", { style: { margin: "12px 0 0", lineHeight: 1.6, fontSize: "calc(1.02em * var(--fs))" } }, entry.significato),
+      entry.altri.length > 0 && h("div", { style: { marginTop: 10, color: C.inkSoft, fontSize: "calc(0.9em * var(--fs))", lineHeight: 1.5 } }, h("strong", { style: { color: C.ink } }, "Pu\xF2 anche voler dire: "), entry.altri.join("; ")),
+      entry.esempio && h("div", { style: { marginTop: 10, background: C.paper, borderRadius: 10, padding: "8px 12px", fontStyle: "italic", lineHeight: 1.5, fontSize: "calc(0.92em * var(--fs))" } }, entry.esempio),
+      h("div", { style: { marginTop: 12 } }, h(SpeakButton, { text: speakText, color, label: "Ascolta" }))
+    )
+  );
+}
+const TERM_CACHE_KEY = "chiarostudio-termini";
+function hashText(t) {
+  let h1 = 2166136261, h2 = 5381;
+  const str = String(t || "");
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = Math.imul(h2, 33) ^ c;
+  }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+function loadTermCache() {
+  try {
+    return JSON.parse(window.localStorage.getItem(TERM_CACHE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveTermEntry(key, text) {
+  try {
+    const c = loadTermCache();
+    c[key] = text;
+    const keys = Object.keys(c);
+    if (keys.length > 600) keys.slice(0, keys.length - 600).forEach((k) => delete c[k]);
+    window.localStorage.setItem(TERM_CACHE_KEY, JSON.stringify(c));
+  } catch {
+  }
+}
+async function explainTermCached(sectionId, contextText, term) {
+  const key = `termine:${sectionId}:${hashText(contextText)}:${normalizeForFilter(term)}`;
+  const local = loadTermCache()[key];
+  if (local) return local;
+  const shared = await sharedCacheGet(key);
+  if (shared) {
+    saveTermEntry(key, shared);
+    return shared;
+  }
+  const explanation = await callClaude({
+    system: "Sei un assistente che spiega singole parole o espressioni a studenti con DSA. Spiega SOLO il termine indicato, nel contesto fornito, in una o due frasi brevi e semplici, senza ripetere il termine come titolo e senza premesse.",
+    userText: `Contesto: "${contextText}"
+
+Spiega il termine: "${term}"`,
+    maxTokens: 200
+  });
+  const text = String(explanation || "").trim();
+  if (!text) throw new Error("Non sono riuscito a spiegarlo, riprova.");
+  saveTermEntry(key, text);
+  sharedCacheSet(key, text);
+  return text;
+}
 function HighlightBar({ containerRef, highlights, onChange }) {
   const pendingRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -23722,6 +23953,28 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
   const [highlights, setHighlights] = useState(initialState?.highlights ?? []);
   const [mapData, setMapData] = useState(initialState?.mapData ?? null);
   const textRef = useRef(null);
+  const [dictMode, setDictMode] = useState(false);
+  const [wordLookup, setWordLookup] = useState(null);
+  const lookupSeqRef = useRef(0);
+  const openWord = async (word, context) => {
+    const seq = ++lookupSeqRef.current;
+    setWordLookup({ word, status: "loading" });
+    try {
+      const entry = await lookupItalianWord(word, context);
+      if (seq === lookupSeqRef.current) setWordLookup({ word, status: "done", entry });
+    } catch (e) {
+      if (seq === lookupSeqRef.current) setWordLookup({ word, status: "error", error: e.message || "Non sono riuscito a trovare il significato. Riprova." });
+    }
+  };
+  const handleDictClick = (e) => {
+    if (!dictMode) return;
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const hit = wordAtPoint(e.clientX, e.clientY, textRef.current);
+    if (hit) openWord(hit.word, hit.context);
+  };
   useEffect(() => {
     if (onStateChange) {
       onStateChange({ image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex, highlights, mapData });
@@ -23739,16 +23992,11 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
   const canGenerate = image || text.trim().length > 0;
   const toggleTerm = async (term) => {
     setOpenTerms((prev) => ({ ...prev, [term]: !prev[term] }));
-    if (explanations[term]) return;
+    const prevExp = explanations[term];
+    if (prevExp && prevExp.status !== "error") return;
     setExplanations((prev) => ({ ...prev, [term]: { status: "loading" } }));
     try {
-      const explanation = await callClaude({
-        system: "Sei un assistente che spiega singole parole o espressioni a studenti con DSA. Spiega SOLO il termine indicato, nel contesto fornito, in una o due frasi brevi e semplici, senza ripetere il termine come titolo e senza premesse.",
-        userText: `Contesto: "${result}"
-
-Spiega il termine: "${term}"`,
-        maxTokens: 200
-      });
+      const explanation = await explainTermCached(sectionId, result, term);
       setExplanations((prev) => ({ ...prev, [term]: { status: "done", text: explanation } }));
     } catch (e) {
       setExplanations((prev) => ({ ...prev, [term]: { status: "error", text: e.message } }));
@@ -23770,6 +24018,7 @@ Spiega il termine: "${term}"`,
     setStartLineIndex(null);
     setHighlights([]);
     setMapData(null);
+    setWordLookup(null);
     const trimmed = text.trim();
     const cacheKey = !image && trimmed && trimmed.length <= 60 ? `${sectionId}:${normalizeTopic(trimmed)}` : null;
     const curatedDiagram = matchCuratedDiagram(sectionId, trimmed);
@@ -23850,6 +24099,23 @@ Spiega il termine: "${term}"`,
       },
       /* @__PURE__ */ React.createElement(Save, { size: 16 }),
       " Salva"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          setDictMode((v) => !v);
+          setWordLookup(null);
+        },
+        "aria-pressed": dictMode,
+        style: {
+          ...secondaryBtnStyle,
+          background: dictMode ? C.wine : C.card,
+          color: dictMode ? "#FFF" : C.wine,
+          borderColor: C.wine
+        }
+      },
+      /* @__PURE__ */ React.createElement(Book, { size: 16 }),
+      dictMode ? " Chiudi dizionario" : " Dizionario"
     ), sectionId === "riassunto" && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -23864,14 +24130,14 @@ Spiega il termine: "${term}"`,
       /* @__PURE__ */ React.createElement(Network, { size: 16 }),
       " ",
       showMapSplit ? "Chiudi mappa" : "Mappa accanto"
-    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), puoiSelezionare && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", margin: "0 0 10px" } }, "Tocca un paragrafo per far partire la lettura da l\xEC."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
+    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), dictMode ? /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.85em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, "Dizionario attivo: tocca una parola che non conosci per sapere cosa significa.") : puoiSelezionare && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", margin: "0 0 10px" } }, "Tocca un paragrafo per far partire la lettura da l\xEC."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "diagram-box",
         style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 16 },
         dangerouslySetInnerHTML: { __html: diagram }
       }
-    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16 } }, /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, onClickCapture: handleDictClick, className: dictMode ? "chiaro-dict-on" : void 0, style: { background: C.card, border: `1.5px solid ${dictMode ? C.wine : C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16, cursor: dictMode ? "help" : void 0 } }, dictMode && /* @__PURE__ */ React.createElement("style", null, ".chiaro-dict-on *{cursor:help!important}"), /* @__PURE__ */ React.createElement(
       FormattedText,
       {
         highlights,
@@ -23901,7 +24167,10 @@ Spiega il termine: "${term}"`,
       },
       /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }),
       " Nuova generazione"
-    ), /* @__PURE__ */ React.createElement(ReportBox, {
+    ), wordLookup && /* @__PURE__ */ React.createElement(WordDefinitionSheet, { lookup: wordLookup, color: C.wine, onClose: () => {
+      lookupSeqRef.current++;
+      setWordLookup(null);
+    } }), /* @__PURE__ */ React.createElement(ReportBox, {
       kind: sectionId,
       topic: reportTrimmed || titleFromText(result, "Argomento"),
       cacheKey: reportCacheKey,
