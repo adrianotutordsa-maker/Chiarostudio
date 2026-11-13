@@ -22229,6 +22229,7 @@ function FormattedText({
       node = /* @__PURE__ */ React.createElement(
         "h3",
         {
+          className: "fl-line",
           style: {
             fontSize: "calc(1.15em * var(--fs))",
             color: C.ink,
@@ -22241,10 +22242,10 @@ function FormattedText({
       cursor += body.length + 1;
     } else if (trimmed.startsWith("- ") || trimmed.startsWith("\u2022 ")) {
       const body = trimmed.slice(2);
-      node = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6em", margin: "0.45em 0", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: C.accent, fontWeight: 700, lineHeight: "1.6" } }, "\u2022"), /* @__PURE__ */ React.createElement("span", { style: { lineHeight: "1.65" } }, renderInline(body, idx, cursor)));
+      node = /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6em", margin: "0.45em 0", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: C.accent, fontWeight: 700, lineHeight: "1.6" } }, "\u2022"), /* @__PURE__ */ React.createElement("span", { className: "fl-line", style: { lineHeight: "1.65" } }, renderInline(body, idx, cursor)));
       cursor += plainLen(body) + 1;
     } else {
-      node = /* @__PURE__ */ React.createElement("p", { style: { margin: "0.55em 0", lineHeight: "1.65" } }, renderInline(trimmed, idx, cursor));
+      node = /* @__PURE__ */ React.createElement("p", { className: "fl-line", style: { margin: "0.55em 0", lineHeight: "1.65" } }, renderInline(trimmed, idx, cursor));
       cursor += plainLen(trimmed) + 1;
     }
     return /* @__PURE__ */ React.createElement(React.Fragment, { key: idx }, /* @__PURE__ */ React.createElement(
@@ -22281,7 +22282,7 @@ function FormattedText({
       },
       (!explanations[openTerm] || explanations[openTerm].status === "loading") && "Sto cercando una spiegazione...",
       explanations[openTerm]?.status === "error" && (explanations[openTerm].text || "Non sono riuscito a spiegarlo, riprova."),
-      explanations[openTerm]?.status === "done" && explanations[openTerm].text
+      explanations[openTerm]?.status === "done" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, explanations[openTerm].text), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 }, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement(SpeakButton, { text: `${openTerm}. ${explanations[openTerm].text}`, color: accentColor, label: "Ascolta" })))
     ));
   }));
 }
@@ -22443,6 +22444,47 @@ function useSpeech() {
   };
   return { speak, stop, speaking, supported };
 }
+const chiaroPrefListeners = {};
+function readPref(key, def) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? def : JSON.parse(raw);
+  } catch {
+    return def;
+  }
+}
+function writePref(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+  }
+  (chiaroPrefListeners[key] || []).slice().forEach((f) => f(value));
+}
+function usePref(key, def) {
+  const [v, setV] = useState(() => readPref(key, def));
+  useEffect(() => {
+    const list = chiaroPrefListeners[key] = chiaroPrefListeners[key] || [];
+    list.push(setV);
+    return () => {
+      chiaroPrefListeners[key] = (chiaroPrefListeners[key] || []).filter((f) => f !== setV);
+    };
+  }, [key]);
+  return [v, (nv) => writePref(key, nv)];
+}
+const PARAGRAPH_MODE_KEY = "chiarostudio-voce-paragrafo";
+const EASY_READ_KEY = "chiarostudio-lettura-facilitata";
+function speechSliceFrom(text, idx, mode) {
+  const lines = splitLines(text);
+  if (idx === null || idx === void 0 || idx < 0 || idx >= lines.length) return text;
+  if (mode === "continua") return lines.slice(idx).join("\n");
+  if (lines[idx].trim().startsWith("## ")) {
+    const out = [lines[idx]];
+    for (let k = idx + 1; k < lines.length && !lines[k].trim().startsWith("## "); k++) out.push(lines[k]);
+    return out.join("\n");
+  }
+  return lines[idx];
+}
+const EASY_READ_CSS = ".chiaro-easy .fl-line{line-height:2.3!important;letter-spacing:0.035em;word-spacing:0.14em;text-decoration-line:underline;text-decoration-color:rgba(46,43,39,0.3);text-decoration-thickness:1px;text-underline-offset:0.62em;text-decoration-skip-ink:none}.chiaro-easy h3.fl-line{line-height:2!important}";
 function SpeakButton({ text, color, label = "Ascolta" }) {
   const { speak, stop, speaking, supported } = useSpeech();
   const [fast, setFast] = useState(speedPref.rate >= SPEECH_RATE_FAST);
@@ -23310,7 +23352,7 @@ function LandingPage({ onEnter }) {
 }
 /* ---------- Segnalazioni condivise (chiave unica nella cache condivisa del Worker) ---------- */
 const REPORTS_SHARED_KEY = "segnalazioni";
-const REPORT_KIND_LABELS = { riassunto: "Riassunto", facile: "Testo facile", formulario: "Formulario", dizionario: "Dizionario" };
+const REPORT_KIND_LABELS = { riassunto: "Riassunto", facile: "Testo facile", formulario: "Formulario", dizionario: "Dizionario", video: "Video YouTube" };
 async function reportsRequest(body) {
   const token = await getClerkToken();
   const res = await fetch(API_ENDPOINT, {
@@ -23350,7 +23392,11 @@ async function applyReportCorrection(report, editedText) {
   } catch {
     entry = {};
   }
-  if (report.kind === "dizionario") {
+  if (report.kind === "video") {
+    const vid = parseYoutubeId(editedText.split(/\s/)[0]) || parseYoutubeId(editedText);
+    if (!vid) throw new Error("bad_video");
+    entry = { videoId: vid, title: "", channel: "", savedAt: Date.now() };
+  } else if (report.kind === "dizionario") {
     entry = { ...entry, voce: editedText, alternative: entry.alternative || [], savedAt: Date.now() };
   } else {
     entry = { ...entry, content: editedText, diagram: entry.diagram ?? null, savedAt: Date.now() };
@@ -23413,7 +23459,7 @@ function ReportBox({ kind, topic, cacheKey, content, onForgetLocal }) {
     return h("p", { style: { color: C.moss, fontWeight: 700, fontSize: "calc(0.85em * var(--fs))", margin: "14px 0 0" } }, h(Check, { size: 14 }), " Segnalazione inviata, grazie \u2014 verr\xE0 rivista.");
   }
   if (!open) {
-    return h("button", { onClick: () => setOpen(true), style: { ...secondaryBtnStyle, marginTop: 14, color: C.inkSoft } }, h(Flag, { size: 15 }), " Segnala un errore");
+    return h("button", { onClick: () => setOpen(true), style: { ...secondaryBtnStyle, marginTop: kind === "video" ? 0 : 14, color: C.inkSoft } }, h(Flag, { size: 15 }), kind === "video" ? " Segnala questo video" : " Segnala un errore");
   }
   return h(
     "div",
@@ -23449,7 +23495,7 @@ function ReportDetail({ report, onBack, onDone }) {
         if (raw) {
           try {
             const p = JSON.parse(raw);
-            current = (report.kind === "dizionario" ? p.voce : p.content) || current;
+            current = (report.kind === "dizionario" ? p.voce : report.kind === "video" ? p.videoId ? `https://www.youtube.com/watch?v=${p.videoId}` : "" : p.content) || current;
           } catch {
           }
         }
@@ -23481,7 +23527,7 @@ function ReportDetail({ report, onBack, onDone }) {
     text === null ? h("p", { style: { color: C.inkSoft } }, "Carico il contenuto\u2026") : h(
       React.Fragment,
       null,
-      h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6 } }, report.cacheKey ? "Contenuto attuale (puoi riscriverlo)" : "Contenuto segnalato"),
+      h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6 } }, report.kind === "video" ? "Link del video (incolla qui il link di un video migliore)" : report.cacheKey ? "Contenuto attuale (puoi riscriverlo)" : "Contenuto segnalato"),
       h("textarea", { value: text, onChange: (e) => setText(e.target.value), rows: 14, readOnly: !report.cacheKey, style: { ...reportTextareaStyle, lineHeight: 1.55 } }),
       !report.cacheKey && h("p", { style: { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))" } }, "Questa segnalazione non \xE8 collegata a un argomento condiviso (testo lungo o foto): puoi leggerla e poi ignorarla."),
       error && h("p", { style: { color: C.wine, fontSize: "calc(0.88em * var(--fs))" } }, error),
@@ -23576,6 +23622,7 @@ function VoceScreen() {
   const [chosen, setChosen] = useState(voicePref.uri);
   const [fast, setFast] = useState(speedPref.rate >= SPEECH_RATE_FAST);
   const [showAll, setShowAll] = useState(false);
+  const [paragraphMode, setParagraphMode] = usePref(PARAGRAPH_MODE_KEY, "paragrafo");
   const supported = typeof window !== "undefined" && !!window.speechSynthesis;
   useEffect(() => {
     let alive = true;
@@ -23647,6 +23694,13 @@ function VoceScreen() {
         { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         h("button", { onClick: () => setSpeed(false), "aria-pressed": !fast, style: { ...secondaryBtnStyle, background: !fast ? C.ink : C.card, color: !fast ? "#FBFAF4" : C.ink, borderColor: !fast ? C.ink : C.border } }, "Normale"),
         h("button", { onClick: () => setSpeed(true), "aria-pressed": fast, style: { ...secondaryBtnStyle, background: fast ? C.ink : C.card, color: fast ? "#FBFAF4" : C.ink, borderColor: fast ? C.ink : C.border } }, "Veloce (1,2\xD7)")
+      ),
+      sectionTitle("Quando tocchi un paragrafo"),
+      h(
+        "div",
+        { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        h("button", { onClick: () => setParagraphMode("paragrafo"), "aria-pressed": paragraphMode !== "continua", style: { ...secondaryBtnStyle, background: paragraphMode !== "continua" ? C.ink : C.card, color: paragraphMode !== "continua" ? "#FBFAF4" : C.ink, borderColor: paragraphMode !== "continua" ? C.ink : C.border } }, "Leggi solo quel paragrafo"),
+        h("button", { onClick: () => setParagraphMode("continua"), "aria-pressed": paragraphMode === "continua", style: { ...secondaryBtnStyle, background: paragraphMode === "continua" ? C.ink : C.card, color: paragraphMode === "continua" ? "#FBFAF4" : C.ink, borderColor: paragraphMode === "continua" ? C.ink : C.border } }, "Continua fino alla fine")
       ),
       sectionTitle("Voce"),
       h(
@@ -23869,6 +23923,122 @@ Spiega il termine: "${term}"`,
   sharedCacheSet(key, text);
   return text;
 }
+const VIDEO_LOCAL_KEY = "chiarostudio-video";
+const VIDEO_WORKER_OLD = "Per i video va aggiornato il Worker su Cloudflare (chiedi al tutor).";
+function videoKeyFor(topic) {
+  return `video:${normalizeTopic(topic)}`;
+}
+function loadVideoLocal() {
+  try {
+    return JSON.parse(window.localStorage.getItem(VIDEO_LOCAL_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveVideoLocal(key, entry) {
+  try {
+    const c = loadVideoLocal();
+    if (entry === null) delete c[key];
+    else c[key] = entry;
+    const keys = Object.keys(c);
+    if (keys.length > 300) keys.slice(0, keys.length - 300).forEach((k) => delete c[k]);
+    window.localStorage.setItem(VIDEO_LOCAL_KEY, JSON.stringify(c));
+  } catch {
+  }
+}
+function parseYoutubeId(url) {
+  const t = String(url || "").trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(t)) return t;
+  const m = t.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|live\/)|youtu\.be\/|youtube-nocookie\.com\/embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+async function findTopicVideo(topic) {
+  if (isBlockedText(topic)) throw new Error(BLOCKED_MESSAGE);
+  const key = videoKeyFor(topic);
+  const local = loadVideoLocal()[key];
+  if (local) return local;
+  const shared = await sharedCacheGet(key);
+  if (shared) {
+    try {
+      const entry = JSON.parse(shared);
+      if (entry && (entry.videoId || entry.none)) {
+        saveVideoLocal(key, entry);
+        return entry;
+      }
+    } catch {
+    }
+  }
+  const token = await getClerkToken();
+  const res = await fetch(API_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
+    body: JSON.stringify({ type: "video_search", topic })
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+  }
+  if (!res.ok || data.error) {
+    if (data.detail === "Manca userText.") throw new Error(VIDEO_WORKER_OLD);
+    throw new Error("Non sono riuscito a cercare il video. Riprova tra poco.");
+  }
+  if (!("video" in data)) throw new Error(VIDEO_WORKER_OLD);
+  const entry = data.video && data.video.videoId ? { videoId: data.video.videoId, title: data.video.title || "", channel: data.video.channel || "", savedAt: Date.now() } : { none: true, savedAt: Date.now() };
+  saveVideoLocal(key, entry);
+  sharedCacheSet(key, JSON.stringify(entry));
+  return entry;
+}
+function TopicVideoBox({ topic, color, state, onState }) {
+  const h = React.createElement;
+  const st = state || { status: "idle" };
+  const key = videoKeyFor(topic);
+  const search = async () => {
+    onState({ status: "loading" });
+    try {
+      const entry = await findTopicVideo(topic);
+      onState({ status: "done", entry });
+    } catch (e) {
+      onState({ status: "error", error: e.message || "Non sono riuscito a cercare il video." });
+    }
+  };
+  const card = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, marginBottom: 16 };
+  if (st.status === "idle") {
+    return h("div", { style: { ...card, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } }, h("div", { style: { flex: "1 1 220px", color: C.inkSoft, fontSize: "calc(0.9em * var(--fs))", lineHeight: 1.45 } }, h("strong", { style: { color: C.ink } }, "Vuoi vederlo spiegato in un video? "), "Cerco su YouTube un video adatto su \xAB", topic, "\xBB."), h("button", { onClick: search, style: { ...secondaryBtnStyle, background: "#C4302B", color: "#FFF", borderColor: "#C4302B" } }, "▶ Trova un video"));
+  }
+  if (st.status === "loading") {
+    return h("div", { style: { ...card, color: C.inkSoft } }, h(Loader2, { size: 15, className: "chiaro-spin", style: { verticalAlign: "-2px", marginRight: 6 } }), "Cerco un video adatto su YouTube… (pu\xF2 volerci qualche secondo)");
+  }
+  if (st.status === "error") {
+    return h("div", { style: { ...card } }, h("p", { style: { color: C.wine, margin: "0 0 10px" } }, st.error), h("button", { onClick: search, style: secondaryBtnStyle }, "Riprova"));
+  }
+  const e = st.entry || {};
+  if (!e.videoId) {
+    return h("div", { style: { ...card, color: C.inkSoft } }, "Non ho trovato un video adatto su questo argomento.");
+  }
+  return h(
+    "div",
+    { style: card },
+    h("div", { style: { position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 12, overflow: "hidden", background: "#000" } }, h("iframe", {
+      src: `https://www.youtube-nocookie.com/embed/${e.videoId}?rel=0&modestbranding=1&playsinline=1`,
+      title: e.title || "Video su YouTube",
+      allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen",
+      allowFullScreen: true,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      style: { position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }
+    })),
+    h("div", { style: { marginTop: 10, fontWeight: 700, color: C.ink, lineHeight: 1.35 } }, e.title || "Video su YouTube"),
+    e.channel && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", marginTop: 2 } }, e.channel),
+    h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "flex-start" } }, h("a", { href: `https://www.youtube.com/watch?v=${e.videoId}`, target: "_blank", rel: "noopener noreferrer", style: { ...secondaryBtnStyle, textDecoration: "none", color } }, "Apri su YouTube ↗"), h(ReportBox, {
+      kind: "video",
+      topic,
+      cacheKey: key,
+      content: `https://www.youtube.com/watch?v=${e.videoId}${e.title ? " — " + e.title : ""}`,
+      onForgetLocal: (k) => saveVideoLocal(k, null)
+    })),
+    h("p", { style: { color: C.inkSoft, fontSize: "calc(0.75em * var(--fs))", margin: "8px 0 0" } }, "Video scelto automaticamente e uguale per tutti su questo argomento. Se non va bene, segnalalo.")
+  );
+}
 function HighlightBar({ containerRef, highlights, onChange }) {
   const pendingRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -23952,7 +24122,10 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
   const [startLineIndex, setStartLineIndex] = useState(initialState?.startLineIndex ?? null);
   const [highlights, setHighlights] = useState(initialState?.highlights ?? []);
   const [mapData, setMapData] = useState(initialState?.mapData ?? null);
+  const [videoState, setVideoState] = useState(initialState?.videoState ?? null);
   const textRef = useRef(null);
+  const [paragraphMode, setParagraphMode] = usePref(PARAGRAPH_MODE_KEY, "paragrafo");
+  const [easyRead, setEasyRead] = usePref(EASY_READ_KEY, false);
   const [dictMode, setDictMode] = useState(false);
   const [wordLookup, setWordLookup] = useState(null);
   const lookupSeqRef = useRef(0);
@@ -23977,9 +24150,9 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
   };
   useEffect(() => {
     if (onStateChange) {
-      onStateChange({ image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex, highlights, mapData });
+      onStateChange({ image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex, highlights, mapData, videoState: videoState && videoState.status === "loading" ? null : videoState });
     }
-  }, [image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex, highlights, mapData]);
+  }, [image, text, status, error, result, diagram, openTerms, explanations, cacheSource, showMapSplit, startLineIndex, highlights, mapData, videoState]);
   useEffect(() => {
     let alive = true;
     loadTopicCache().then((c) => {
@@ -24018,6 +24191,7 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
     setStartLineIndex(null);
     setHighlights([]);
     setMapData(null);
+    setVideoState(null);
     setWordLookup(null);
     const trimmed = text.trim();
     const cacheKey = !image && trimmed && trimmed.length <= 60 ? `${sectionId}:${normalizeTopic(trimmed)}` : null;
@@ -24084,13 +24258,31 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
     const puoiSelezionare = sectionId !== "formulario";
     const reportTrimmed = text.trim();
     const reportCacheKey = !image && reportTrimmed && reportTrimmed.length <= 60 ? `${sectionId}:${normalizeTopic(reportTrimmed)}` : null;
+    const videoTopic = !image && reportTrimmed && reportTrimmed.length <= 60 ? reportTrimmed : titleFromText(result, "");
     return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: showMapSplit ? "none" : 760 } }, /* @__PURE__ */ React.createElement(PageHeader, { title, subtitle: titleFromText(result, "") }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       SpeakButton,
       {
-        text: startLineIndex !== null ? splitLines(result).slice(startLineIndex).join("\n") : result,
+        text: startLineIndex !== null ? speechSliceFrom(result, startLineIndex, paragraphMode) : result,
         color,
-        label: startLineIndex !== null ? "Ascolta da qui" : "Ascolta"
+        label: startLineIndex !== null ? paragraphMode === "continua" ? "Ascolta da qui" : "Ascolta il paragrafo" : "Ascolta"
       }
+    ), startLineIndex !== null && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setParagraphMode(paragraphMode === "continua" ? "paragrafo" : "continua"),
+        title: "Scegli se fermarti alla fine del paragrafo o continuare",
+        style: { ...secondaryBtnStyle, color, borderColor: color }
+      },
+      paragraphMode === "continua" ? "\u23E9 Continua fino alla fine" : "\u23F9 Fermati a fine paragrafo"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setEasyRead(!easyRead),
+        "aria-pressed": !!easyRead,
+        title: "Righe pi\xF9 distanziate e sottolineate, per leggere meglio",
+        style: { ...secondaryBtnStyle, background: easyRead ? C.ink : C.card, color: easyRead ? "#FBFAF4" : C.ink, borderColor: easyRead ? C.ink : C.border }
+      },
+      "\u2630 Lettura facilitata"
     ), /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -24130,14 +24322,14 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
       /* @__PURE__ */ React.createElement(Network, { size: 16 }),
       " ",
       showMapSplit ? "Chiudi mappa" : "Mappa accanto"
-    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), dictMode ? /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.85em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, "Dizionario attivo: tocca una parola che non conosci per sapere cosa significa.") : puoiSelezionare && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", margin: "0 0 10px" } }, "Tocca un paragrafo per far partire la lettura da l\xEC."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
+    )), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), dictMode ? /* @__PURE__ */ React.createElement("p", { style: { color: C.wine, fontSize: "calc(0.85em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, "Dizionario attivo: tocca una parola che non conosci per sapere cosa significa.") : puoiSelezionare && /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", margin: "0 0 10px" } }, paragraphMode === "continua" ? "Tocca un paragrafo per far partire la lettura da l\xEC." : "Tocca un paragrafo per ascoltare solo quello."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: showMapSplit ? "1 1 420px" : "1 1 auto", minWidth: 0 } }, diagram && /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "diagram-box",
         style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 16 },
         dangerouslySetInnerHTML: { __html: diagram }
       }
-    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, onClickCapture: handleDictClick, className: dictMode ? "chiaro-dict-on" : void 0, style: { background: C.card, border: `1.5px solid ${dictMode ? C.wine : C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16, cursor: dictMode ? "help" : void 0 } }, dictMode && /* @__PURE__ */ React.createElement("style", null, ".chiaro-dict-on *{cursor:help!important}"), /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, onClickCapture: handleDictClick, className: [dictMode ? "chiaro-dict-on" : "", easyRead ? "chiaro-easy" : ""].join(" ").trim() || void 0, style: { background: C.card, border: `1.5px solid ${dictMode ? C.wine : C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16, cursor: dictMode ? "help" : void 0 } }, /* @__PURE__ */ React.createElement("style", null, EASY_READ_CSS), dictMode && /* @__PURE__ */ React.createElement("style", null, ".chiaro-dict-on *{cursor:help!important}"), /* @__PURE__ */ React.createElement(
       FormattedText,
       {
         highlights,
@@ -24151,7 +24343,7 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
         startIndex: startLineIndex,
         onSelectStart: (idx) => setStartLineIndex((prev) => prev === idx ? null : idx)
       }
-    )), /* @__PURE__ */ React.createElement(
+    )), sectionId === "riassunto" && videoTopic && /* @__PURE__ */ React.createElement(TopicVideoBox, { key: videoKeyFor(videoTopic), topic: videoTopic, color, state: videoState, onState: setVideoState }), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => {
@@ -24162,6 +24354,7 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
           setStartLineIndex(null);
           setHighlights([]);
           setMapData(null);
+          setVideoState(null);
         },
         style: secondaryBtnStyle
       },
@@ -24429,7 +24622,7 @@ function parseFlashcardJson(raw) {
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("empty");
   return parsed.map((c) => ({ fronte: String(c.fronte || "").trim(), retro: String(c.retro || "").trim() }));
 }
-function FlashcardScreen({ fontScale, onSave, initialCards }) {
+function FlashcardScreen({ fontScale, onSave, initialCards, archivio = [] }) {
   const hasInitialDeck = Array.isArray(initialCards) && initialCards.length > 0;
   const [image, setImage] = useState(null);
   const [text, setText] = useState("");
@@ -24439,6 +24632,8 @@ function FlashcardScreen({ fontScale, onSave, initialCards }) {
   const [current, setCurrent] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [mostraRetro, setMostraRetro] = useState(false);
+  const [mappa, setMappa] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [topicCache, setTopicCache] = useState({});
   const [cacheSource, setCacheSource] = useState(null);
   useEffect(() => {
@@ -24557,7 +24752,11 @@ function FlashcardScreen({ fontScale, onSave, initialCards }) {
   };
   if (status === "studio" && cards.length > 0) {
     const card = cards[current];
-    return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Flashcard", subtitle: `Carta ${current + 1} di ${cards.length}. Clicca la carta per girarla.` }), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color: C.rust, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement(
+    const mapsList = savedMapsFromArchivio(archivio, text || (cards[0] && cards[0].fronte) || "");
+    const studyColumn = /* @__PURE__ */ React.createElement("div", { className: mappa ? "interr-chat" : void 0, style: { maxWidth: mappa ? void 0 : 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Flashcard", subtitle: `Carta ${current + 1} di ${cards.length}. Clicca la carta per girarla.` }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setPickerOpen((v) => !v), style: { ...secondaryBtnStyle, padding: "7px 12px" } }, /* @__PURE__ */ React.createElement(Network, { size: 15 }), mappa ? " Cambia mappa" : " Apri una mappa"), mappa && /* @__PURE__ */ React.createElement("button", { onClick: () => setMappa(null), style: { ...secondaryBtnStyle, padding: "7px 12px", color: C.inkSoft } }, /* @__PURE__ */ React.createElement(X, { size: 14 }), " Chiudi mappa")), pickerOpen && /* @__PURE__ */ React.createElement(MapPicker, { maps: mapsList, onPick: (m) => {
+      setMappa({ id: m.id, title: m.title, data: m.data });
+      setPickerOpen(false);
+    }, onClose: () => setPickerOpen(false) }), cacheSource && /* @__PURE__ */ React.createElement("p", { style: { color: C.rust, fontSize: "calc(0.78em * var(--fs))", margin: "0 0 10px", fontWeight: 700 } }, cacheSource === "personal" ? "\u{1F4CE} Dalla tua cache personale \u2014 nessuna nuova generazione." : "\u{1F30D} Gi\xE0 generato da un altro studente \u2014 risparmiata una chiamata AI."), /* @__PURE__ */ React.createElement(
       "div",
       {
         onClick: () => setFlipped((f) => !f),
@@ -24683,6 +24882,17 @@ function FlashcardScreen({ fontScale, onSave, initialCards }) {
       },
       "Nuovo mazzo"
     ));
+    if (!mappa) return studyColumn;
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("style", null, INTERR_SPLIT_CSS), /* @__PURE__ */ React.createElement("div", { className: "interr-split" }, studyColumn, /* @__PURE__ */ React.createElement("div", { className: "interr-map" }, /* @__PURE__ */ React.createElement(
+      MappaWebScreen,
+      {
+        key: mappa.id,
+        embedded: true,
+        initialData: mappa.data,
+        onDataChange: (data) => setMappa((m) => m ? { ...m, data } : m),
+        onSave: (data) => onSave({ type: "mappa", title: data.topic || "Mappa", content: JSON.stringify(data), materia: "" })
+      }
+    ))));
   }
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Flashcard", subtitle: "Scrivi un argomento, incolla un testo o carica una foto: creo un mazzo di carte pronte da ripassare." }), error && /* @__PURE__ */ React.createElement(ErrorBanner, { text: error }), /* @__PURE__ */ React.createElement(ImagePicker, { image, onPick: handlePick, onClear: () => setImage(null) }), /* @__PURE__ */ React.createElement("div", { style: { position: "relative", marginBottom: 14 } }, /* @__PURE__ */ React.createElement(
     "textarea",
@@ -25159,7 +25369,11 @@ const SHAPES = [
   { l: "Squadrato", v: 4 }
 ];
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+const MAP_SIZE_KEY = "chiarostudio-mappa-dimensione";
+const MAP_ZOOM_MIN = 0.5;
+const MAP_ZOOM_MAX = 3;
 function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
+  const h = React.createElement;
   const [topic, setTopic] = useState(initialData?.topic || "");
   const [started, setStarted] = useState(!!initialData);
   const [branches, setBranches] = useState(initialData?.branches || []);
@@ -25167,16 +25381,129 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const [draft, setDraft] = useState("");
   const [draggingId, setDraggingId] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [editingCenter, setEditingCenter] = useState(false);
   const [collegaMode, setCollegaMode] = useState(false);
   const [connectFrom, setConnectFrom] = useState(null);
   const [hoverTargetId, setHoverTargetId] = useState(null);
+  const [defaultScale, setDefaultScale] = useState(() => {
+    const v = readPref(MAP_SIZE_KEY, 1);
+    return SIZES.some((s) => s.v === v) ? v : 1;
+  });
+  const [zoom, setZoom] = useState(1);
+  const [box, setBox] = useState({ w: 0, h: 0 });
   useEffect(() => {
     if (onDataChange) onDataChange({ topic, branches, edges });
   }, [topic, branches, edges]);
   const canvasRef = useRef(null);
+  const viewportRef = useRef(null);
   const dragInfoRef = useRef({ x: 0, y: 0, moved: false });
   const lastTapRef = useRef({ time: 0, x: 0, y: 0 });
+  const pinchRef = useRef(null);
+  const pinchingRef = useRef(false);
+  const zoomRef = useRef(1);
+  const pendingScrollRef = useRef(null);
+  zoomRef.current = zoom;
   const DROP_THRESHOLD = 13;
+
+  // dimensione di base del riquadro: tutta la larghezza disponibile
+  useEffect(() => {
+    if (!started) return;
+    const el = viewportRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = Math.max(240, Math.min(el.clientWidth, 1100));
+      const hh = Math.round(Math.min(Math.max(w * 0.8, 300), window.innerHeight * 0.72, 900));
+      setBox((prev) => prev.w === w && prev.h === hh ? prev : { w, h: hh });
+    };
+    measure();
+    let ro = null;
+    if (window.ResizeObserver) {
+      ro = new ResizeObserver(measure);
+      ro.observe(el);
+    }
+    window.addEventListener("resize", measure);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [started]);
+
+  // zoom mantenendo fermo il punto sotto le dita (o sotto il puntatore)
+  const zoomAround = (nextZoom, clientX, clientY) => {
+    const vp = viewportRef.current;
+    const z = clamp(Math.round(nextZoom * 100) / 100, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
+    if (!vp) {
+      setZoom(z);
+      return;
+    }
+    const r = vp.getBoundingClientRect();
+    const px = clientX === void 0 ? r.width / 2 : clientX - r.left;
+    const py = clientY === void 0 ? r.height / 2 : clientY - r.top;
+    const cur = zoomRef.current;
+    pendingScrollRef.current = {
+      left: (vp.scrollLeft + px) / cur * z - px,
+      top: (vp.scrollTop + py) / cur * z - py
+    };
+    setZoom(z);
+  };
+  React.useLayoutEffect(() => {
+    const p = pendingScrollRef.current;
+    const vp = viewportRef.current;
+    if (p && vp) {
+      vp.scrollLeft = Math.max(0, p.left);
+      vp.scrollTop = Math.max(0, p.top);
+    }
+    pendingScrollRef.current = null;
+  }, [zoom]);
+
+  // pizzico con due dita (telefono e tablet) e ctrl + rotellina / pizzico sul trackpad
+  useEffect(() => {
+    if (!started) return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    const onStart = (e) => {
+      if (e.touches.length === 2) {
+        pinchingRef.current = true;
+        pinchRef.current = { d: dist(e.touches), z: zoomRef.current };
+        setDraggingId(null);
+        setHoverTargetId(null);
+        e.preventDefault();
+      }
+    };
+    const onMove = (e) => {
+      if (e.touches.length === 2 && pinchRef.current) {
+        e.preventDefault();
+        const m = mid(e.touches);
+        zoomAround(pinchRef.current.z * dist(e.touches) / pinchRef.current.d, m.x, m.y);
+      }
+    };
+    const onEnd = (e) => {
+      if (e.touches.length < 2) pinchRef.current = null;
+      if (e.touches.length === 0) setTimeout(() => {
+        pinchingRef.current = false;
+      }, 60);
+    };
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      zoomAround(zoomRef.current * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    };
+    vp.addEventListener("touchstart", onStart, { passive: false });
+    vp.addEventListener("touchmove", onMove, { passive: false });
+    vp.addEventListener("touchend", onEnd);
+    vp.addEventListener("touchcancel", onEnd);
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      vp.removeEventListener("touchstart", onStart);
+      vp.removeEventListener("touchmove", onMove);
+      vp.removeEventListener("touchend", onEnd);
+      vp.removeEventListener("touchcancel", onEnd);
+      vp.removeEventListener("wheel", onWheel);
+    };
+  }, [started]);
+
   const nearestNodeId = (excludeId, x, y, threshold = DROP_THRESHOLD) => {
     let bestId = null;
     let bestDist = threshold;
@@ -25200,7 +25527,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
       x: clamp(50 + Math.cos(angle) * 34, 10, 90),
       y: clamp(50 + Math.sin(angle) * 34, 10, 90),
       color: MAP_COLORS[idx % MAP_COLORS.length],
-      scale: 1,
+      scale: defaultScale,
       radius: 12
     };
   };
@@ -25216,7 +25543,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     setDraft("");
   };
   const handleCanvasClick = (e) => {
-    if (collegaMode || e.target !== canvasRef.current) return;
+    if (collegaMode || pinchingRef.current || e.target !== canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const x = clamp((e.clientX - rect.left) / rect.width * 100, 8, 92);
     const y = clamp((e.clientY - rect.top) / rect.height * 100, 8, 92);
@@ -25232,12 +25559,13 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         x,
         y,
         color: MAP_COLORS[idx % MAP_COLORS.length],
-        scale: 1,
+        scale: defaultScale,
         radius: 12
       };
       const parentId = nearestNodeId(nb.id, x, y, Infinity) || "center";
       setBranches((prev) => [...prev, nb]);
       setEdges((prev) => [...prev, { id: `e-${nb.id}`, a: parentId, b: nb.id }]);
+      setEditingCenter(false);
       setEditingId(nb.id);
     } else {
       lastTapRef.current = { time: now, x, y };
@@ -25248,6 +25576,11 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     setEdges((prev) => prev.filter((e) => e.a !== id && e.b !== id));
   };
   const updateBranch = (id, patch) => setBranches((prev) => prev.map((b) => b.id === id ? { ...b, ...patch } : b));
+  const chooseSize = (id, v) => {
+    updateBranch(id, { scale: v });
+    setDefaultScale(v);
+    writePref(MAP_SIZE_KEY, v);
+  };
   const toggleEdge = (a, b) => {
     setEdges((prev) => {
       const exists = prev.find((e) => e.a === a && e.b === b || e.a === b && e.b === a);
@@ -25267,15 +25600,15 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     const target = posOf(targetId);
     let dx = dropX - target.x;
     let dy = dropY - target.y;
-    let dist = Math.hypot(dx, dy);
-    if (dist < 0.01) {
+    let d = Math.hypot(dx, dy);
+    if (d < 0.01) {
       const angle = Math.random() * Math.PI * 2;
       dx = Math.cos(angle);
       dy = Math.sin(angle);
-      dist = 1;
+      d = 1;
     }
-    const newX = clamp(target.x + dx / dist * OFFSET_DISTANCE, 6, 94);
-    const newY = clamp(target.y + dy / dist * OFFSET_DISTANCE, 6, 94);
+    const newX = clamp(target.x + dx / d * OFFSET_DISTANCE, 6, 94);
+    const newY = clamp(target.y + dy / d * OFFSET_DISTANCE, 6, 94);
     setEdges((prev) => {
       const filtered = prev.filter((e) => e.a !== draggedId && e.b !== draggedId);
       return [...filtered, { id: `e-${Date.now()}-${Math.random()}`, a: draggedId, b: targetId }];
@@ -25297,12 +25630,49 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         toggleEdge(prev, id);
         return null;
       });
+    } else if (id === "center") {
+      setEditingId(null);
+      setEditingCenter(true);
     } else {
+      setEditingCenter(false);
       setEditingId(id);
     }
   };
+  const autoGrow = (el) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  const autoFocusGrow = (el) => {
+    if (!el) return;
+    autoGrow(el);
+    if (document.activeElement !== el) {
+      el.focus();
+      const n = el.value.length;
+      try {
+        el.setSelectionRange(n, n);
+      } catch {
+      }
+    }
+  };
+  const btnStyle = (active) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "9px 13px",
+    borderRadius: 11,
+    border: `1.5px solid ${C.blue}`,
+    background: active ? C.blue : "transparent",
+    color: active ? "#FBFAF4" : C.blue,
+    fontWeight: 700,
+    fontSize: "calc(0.88em * var(--fs))",
+    cursor: "pointer",
+    fontFamily: FONT
+  });
+  const zoomBtn = { ...btnStyle(false), padding: "7px 11px", minWidth: 40, justifyContent: "center" };
+
   if (!started) {
-    return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100%", display: "flex", flexDirection: "column" } }, !embedded && /* @__PURE__ */ React.createElement(PageHeader, { title: "Mappa mentale", subtitle: "Costruiscila scrivendo o parlando: parti dall'argomento centrale." }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.96em * var(--fs))", lineHeight: 1.55, marginBottom: 16 } }, "Scrivi o detta l'argomento centrale della mappa."), /* @__PURE__ */ React.createElement("div", { style: { position: "relative", marginBottom: 16 } }, /* @__PURE__ */ React.createElement(
+    return h("div", { style: { minHeight: "100%", display: "flex", flexDirection: "column" } }, !embedded && h(PageHeader, { title: "Mappa mentale", subtitle: "Costruiscila scrivendo o parlando: parti dall'argomento centrale." }), h("div", null, h("p", { style: { color: C.inkSoft, fontSize: "calc(0.96em * var(--fs))", lineHeight: 1.55, marginBottom: 16 } }, "Scrivi o detta l'argomento centrale della mappa."), h("div", { style: { position: "relative", marginBottom: 16 } }, h(
       "input",
       {
         value: topic,
@@ -25319,40 +25689,36 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
           boxSizing: "border-box"
         }
       }
-    ), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 8, right: 8 } }, /* @__PURE__ */ React.createElement(
+    ), h("div", { style: { position: "absolute", top: 8, right: 8 } }, h(
       DictateButton,
       {
         color: C.blue,
         onResult: (t) => setTopic((prev) => prev ? `${prev} ${t}`.trim() : t)
       }
-    ))), /* @__PURE__ */ React.createElement(PrimaryButton, { onClick: () => topic.trim() && setStarted(true), disabled: !topic.trim(), color: C.blue }, "Inizia la mappa")));
+    ))), h(PrimaryButton, { onClick: () => topic.trim() && setStarted(true), disabled: !topic.trim(), color: C.blue }, "Inizia la mappa")));
   }
+
   const editingNode = editingId ? branches.find((b) => b.id === editingId) : null;
-  return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100%", display: "flex", flexDirection: "column" } }, !embedded && /* @__PURE__ */ React.createElement(PageHeader, { title: "Mappa mentale", subtitle: topic }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(SpeakButton, { text: readAloudText(), color: C.blue, label: "Ascolta" }), /* @__PURE__ */ React.createElement(SaveButton, { color: C.blue, onSave: () => onSave({ topic, branches, edges }) }), /* @__PURE__ */ React.createElement(
+  const W = Math.round((box.w || 600) * zoom);
+  const H = Math.round((box.h || 480) * zoom);
+  const mz = zoom;
+  const centerSize = (editingCenter ? Math.max(170, 108 * Math.max(mz, 1)) : 108 * mz);
+  const shiftX = (x) => x < 22 ? "-18%" : x > 78 ? "-82%" : "-50%";
+
+  const toolbar = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } }, h(SpeakButton, { text: readAloudText(), color: C.blue, label: "Ascolta" }), h(SaveButton, { color: C.blue, onSave: () => onSave({ topic, branches, edges }) }), h(
     "button",
     {
       onClick: () => {
         setCollegaMode((v) => !v);
         setConnectFrom(null);
+        setEditingId(null);
+        setEditingCenter(false);
       },
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "9px 13px",
-        borderRadius: 11,
-        border: `1.5px solid ${C.blue}`,
-        background: collegaMode ? C.blue : "transparent",
-        color: collegaMode ? "#FBFAF4" : C.blue,
-        fontWeight: 700,
-        fontSize: "calc(0.88em * var(--fs))",
-        cursor: "pointer",
-        fontFamily: FONT
-      }
+      style: btnStyle(collegaMode)
     },
-    /* @__PURE__ */ React.createElement(Link2, { size: 14 }),
+    h(Link2, { size: 14 }),
     " Collega"
-  ), /* @__PURE__ */ React.createElement(
+  ), h("div", { style: { display: "flex", gap: 4, alignItems: "center" } }, h("button", { onClick: () => zoomAround(zoom / 1.25), "aria-label": "Riduci la mappa", disabled: zoom <= MAP_ZOOM_MIN, style: zoomBtn }, "−"), h("button", { onClick: () => zoomAround(1), "aria-label": "Zoom normale", style: { ...zoomBtn, minWidth: 58 } }, `${Math.round(zoom * 100)}%`), h("button", { onClick: () => zoomAround(zoom * 1.25), "aria-label": "Ingrandisci la mappa", disabled: zoom >= MAP_ZOOM_MAX, style: zoomBtn }, "+")), h(
     "button",
     {
       onClick: () => {
@@ -25360,6 +25726,9 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         setBranches([]);
         setEdges([]);
         setTopic("");
+        setEditingId(null);
+        setEditingCenter(false);
+        setZoom(1);
       },
       style: {
         marginLeft: "auto",
@@ -25373,232 +25742,268 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
       }
     },
     "Nuova"
-  )), /* @__PURE__ */ React.createElement("p", { style: { margin: "10px 18px 0", color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))" } }, collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Trascina per spostarlo, o rilascialo su un altro per collegarli. Toccalo per personalizzarlo. Doppio tocco sullo sfondo per crearne uno nuovo l\xEC." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo del riquadro."), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px 16px" } }, /* @__PURE__ */ React.createElement(
+  ));
+
+  const hint = collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Trascina per spostarlo, o rilascialo su un altro per collegarli. Tocca un palloncino (o il cerchio centrale) per modificarlo. Doppio tocco sullo sfondo per crearne uno nuovo. Con due dita allarghi o stringi la mappa." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo. Tocca il cerchio centrale per cambiarne il titolo.";
+
+  const center = h(
     "div",
     {
-      ref: canvasRef,
-      onClick: handleCanvasClick,
-      style: { position: "relative", width: "100%", maxWidth: 640, aspectRatio: "1 / 1", maxHeight: 560, cursor: "copy" }
-    },
-    /* @__PURE__ */ React.createElement(
-      "svg",
-      {
-        viewBox: "0 0 100 100",
-        preserveAspectRatio: "none",
-        style: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }
+      onClick: (e) => {
+        e.stopPropagation();
+        if (pinchingRef.current) return;
+        handleNodeTap("center");
       },
-      edges.map((e) => {
-        const p1 = posOf(e.a);
-        const p2 = posOf(e.b);
-        return /* @__PURE__ */ React.createElement(
-          "line",
-          {
-            key: e.id,
-            x1: p1.x,
-            y1: p1.y,
-            x2: p2.x,
-            y2: p2.y,
-            stroke: edgeColor(e),
-            strokeWidth: 0.6
-          }
-        );
-      })
-    ),
-    /* @__PURE__ */ React.createElement(
+      style: {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: "translate(-50%, -50%)",
+        width: centerSize,
+        minHeight: editingCenter ? void 0 : centerSize,
+        borderRadius: editingCenter ? 22 : "50%",
+        background: C.ink,
+        color: "#FBFAF4",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: editingCenter ? 12 : 10 * mz,
+        fontSize: editingCenter ? `calc(0.95em * var(--fs) * ${Math.max(mz, 1)})` : `calc(0.85em * var(--fs) * ${mz})`,
+        fontWeight: 700,
+        lineHeight: 1.25,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        zIndex: editingCenter ? 20 : 2,
+        boxShadow: collegaMode && connectFrom === "center" || hoverTargetId === "center" || editingCenter ? `0 0 0 3px ${C.blue}, 0 4px 14px rgba(38,55,75,0.18)` : "0 4px 14px rgba(38,55,75,0.18)",
+        cursor: "pointer"
+      }
+    },
+    editingCenter ? h("textarea", {
+      ref: autoFocusGrow,
+      value: topic,
+      rows: 1,
+      onChange: (e) => {
+        setTopic(e.target.value);
+        autoGrow(e.target);
+      },
+      onClick: (e) => e.stopPropagation(),
+      onKeyDown: (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          setEditingCenter(false);
+        }
+      },
+      "aria-label": "Argomento centrale",
+      placeholder: "Argomento centrale",
+      className: "chiaro-balloon-input",
+      style: { background: "transparent", border: "none", outline: "none", color: "#FBFAF4", fontWeight: 700, fontSize: "inherit", fontFamily: FONT, textAlign: "center", width: "100%", resize: "none", overflow: "hidden", lineHeight: 1.3, padding: 0 }
+    }) : topic || h("span", { style: { opacity: 0.7, fontWeight: 400 } }, "Tocca per dare un titolo")
+  );
+
+  const bubbles = branches.map((b) => {
+    const isDragging = draggingId === b.id;
+    const isEditing = editingId === b.id;
+    const isSelectedForConnect = collegaMode && connectFrom === b.id;
+    const isDropTarget = !collegaMode && hoverTargetId === b.id && draggingId !== b.id;
+    const ez = isEditing ? Math.max(mz, 1) : mz;
+    return h(
       "div",
       {
+        key: b.id,
+        onPointerDown: (e) => {
+          if (isEditing || pinchingRef.current) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragInfoRef.current = { x: e.clientX, y: e.clientY, moved: false };
+          setDraggingId(b.id);
+        },
+        onPointerMove: (e) => {
+          if (draggingId !== b.id) return;
+          if (pinchingRef.current) {
+            dragInfoRef.current.moved = true;
+            return;
+          }
+          const dx = e.clientX - dragInfoRef.current.x;
+          const dy = e.clientY - dragInfoRef.current.y;
+          if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragInfoRef.current.moved = true;
+          if (dragInfoRef.current.moved) movePalloncino(b.id, e.clientX, e.clientY);
+        },
+        onPointerUp: () => {
+          if (draggingId !== b.id) return;
+          setDraggingId(null);
+          if (pinchingRef.current) {
+            setHoverTargetId(null);
+            return;
+          }
+          if (!dragInfoRef.current.moved) {
+            handleNodeTap(b.id);
+          } else if (!collegaMode && hoverTargetId) {
+            reconnectNode(b.id, hoverTargetId, b.x, b.y);
+          }
+          setHoverTargetId(null);
+        },
+        onPointerCancel: () => {
+          setDraggingId(null);
+          setHoverTargetId(null);
+        },
         style: {
           position: "absolute",
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 108,
-          minHeight: 108,
-          borderRadius: "50%",
-          background: C.ink,
-          color: "#FBFAF4",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          padding: 10,
-          fontSize: "calc(0.85em * var(--fs))",
-          fontWeight: 700,
-          lineHeight: 1.25,
-          boxShadow: collegaMode && connectFrom === "center" || hoverTargetId === "center" ? `0 0 0 3px ${C.blue}, 0 4px 14px rgba(38,55,75,0.18)` : "0 4px 14px rgba(38,55,75,0.18)",
-          cursor: collegaMode ? "pointer" : "default"
-        },
-        onClick: () => collegaMode && handleNodeTap("center")
+          left: `${b.x}%`,
+          top: `${b.y}%`,
+          transform: `translate(${isEditing ? shiftX(b.x) : "-50%"}, -50%) scale(${isDragging ? 1.1 : 1})`,
+          width: isEditing ? Math.round(Math.max(250, 190 * b.scale) * ez) : "max-content",
+          maxWidth: isEditing ? "92vw" : Math.round(115 * b.scale * mz),
+          touchAction: isEditing ? "auto" : "none",
+          cursor: isEditing ? "text" : isDragging ? "grabbing" : "grab",
+          transition: isDragging ? "none" : "transform 0.12s ease",
+          zIndex: isEditing ? 20 : isDragging ? 5 : 1
+        }
       },
-      topic
-    ),
-    branches.map((b) => {
-      const isDragging = draggingId === b.id;
-      const isSelectedForConnect = collegaMode && connectFrom === b.id;
-      const isDropTarget = !collegaMode && hoverTargetId === b.id && draggingId !== b.id;
-      return /* @__PURE__ */ React.createElement(
+      h(
         "div",
         {
-          key: b.id,
-          onPointerDown: (e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            dragInfoRef.current = { x: e.clientX, y: e.clientY, moved: false };
-            setDraggingId(b.id);
-          },
-          onPointerMove: (e) => {
-            if (draggingId !== b.id) return;
-            const dx = e.clientX - dragInfoRef.current.x;
-            const dy = e.clientY - dragInfoRef.current.y;
-            if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragInfoRef.current.moved = true;
-            movePalloncino(b.id, e.clientX, e.clientY);
-          },
-          onPointerUp: () => {
-            setDraggingId(null);
-            if (!dragInfoRef.current.moved) {
-              handleNodeTap(b.id);
-            } else if (!collegaMode && hoverTargetId) {
-              reconnectNode(b.id, hoverTargetId, b.x, b.y);
-            }
-            setHoverTargetId(null);
-          },
-          onPointerCancel: () => {
-            setDraggingId(null);
-            setHoverTargetId(null);
-          },
           style: {
-            position: "absolute",
-            left: `${b.x}%`,
-            top: `${b.y}%`,
-            transform: `translate(-50%, -50%) scale(${isDragging ? 1.1 : 1})`,
-            maxWidth: Math.round(115 * b.scale),
-            touchAction: "none",
-            cursor: isDragging ? "grabbing" : "grab",
-            transition: isDragging ? "none" : "transform 0.12s ease",
-            zIndex: isDragging ? 5 : 1
+            position: "relative",
+            background: b.color,
+            color: "#FBFAF4",
+            borderRadius: b.radius,
+            padding: `${Math.round(8 * b.scale * ez)}px ${Math.round(10 * b.scale * ez)}px`,
+            minWidth: Math.round(26 * b.scale * ez),
+            minHeight: Math.round(26 * b.scale * ez),
+            fontSize: `calc(${(0.78 * b.scale).toFixed(2)}em * var(--fs) * ${ez})`,
+            fontWeight: 600,
+            lineHeight: 1.25,
+            textAlign: "center",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            overflowWrap: "anywhere",
+            boxShadow: isEditing ? `0 0 0 3px ${C.ink}, 0 8px 22px rgba(38,55,75,0.3)` : isSelectedForConnect ? `0 0 0 3px ${C.ink}, 0 3px 10px rgba(38,55,75,0.14)` : isDropTarget ? `0 0 0 3px ${C.blue}, 0 4px 14px rgba(38,55,75,0.24)` : isDragging ? "0 8px 20px rgba(38,55,75,0.28)" : "0 3px 10px rgba(38,55,75,0.14)",
+            userSelect: isEditing ? "text" : "none"
           }
         },
-        /* @__PURE__ */ React.createElement(
-          "div",
-          {
-            style: {
-              position: "relative",
-              background: b.color,
-              color: "#FBFAF4",
-              borderRadius: b.radius,
-              padding: `${8 * b.scale}px ${10 * b.scale}px`,
-              minWidth: Math.round(26 * b.scale),
-              minHeight: Math.round(26 * b.scale),
-              fontSize: `calc(${(0.78 * b.scale).toFixed(2)}em * var(--fs))`,
-              fontWeight: 600,
-              lineHeight: 1.25,
-              textAlign: "center",
-              wordBreak: "break-word",
-              overflowWrap: "anywhere",
-              boxShadow: isSelectedForConnect ? `0 0 0 3px ${C.ink}, 0 3px 10px rgba(38,55,75,0.14)` : isDropTarget ? `0 0 0 3px ${C.blue}, 0 4px 14px rgba(38,55,75,0.24)` : isDragging ? "0 8px 20px rgba(38,55,75,0.28)" : "0 3px 10px rgba(38,55,75,0.14)",
-              userSelect: "none"
+        isEditing ? h("textarea", {
+          ref: autoFocusGrow,
+          value: b.text,
+          rows: 1,
+          onChange: (e) => {
+            updateBranch(b.id, { text: e.target.value });
+            autoGrow(e.target);
+          },
+          onPointerDown: (e) => e.stopPropagation(),
+          onKeyDown: (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              setEditingId(null);
             }
           },
-          editingId === b.id ? /* @__PURE__ */ React.createElement(
-            "input",
-            {
-              ref: (el) => el && el.focus(),
-              value: b.text,
-              onChange: (e) => updateBranch(b.id, { text: e.target.value }),
-              onPointerDown: (e) => e.stopPropagation(),
-              onKeyDown: (e) => {
-                if (e.key === "Enter") e.currentTarget.blur();
-              },
-              placeholder: "scrivi qui",
-              className: "chiaro-balloon-input",
-              style: {
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "#FBFAF4",
-                fontWeight: 600,
-                fontSize: "inherit",
-                fontFamily: FONT,
-                textAlign: "center",
-                width: "100%",
-                minWidth: 54
-              }
-            }
-          ) : b.text || /* @__PURE__ */ React.createElement("span", { style: { opacity: 0.75, fontWeight: 400 } }, "scrivi qui"),
-          /* @__PURE__ */ React.createElement(
-            "button",
-            {
-              onPointerDown: (e) => e.stopPropagation(),
-              onClick: (e) => {
-                e.stopPropagation();
-                removeBranch(b.id);
-                if (editingId === b.id) setEditingId(null);
-              },
-              "aria-label": "Rimuovi ramo",
-              style: {
-                position: "absolute",
-                top: -8,
-                right: -8,
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                border: "none",
-                background: C.rust,
-                color: "#FBFAF4",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                padding: 0
-              }
+          placeholder: "scrivi qui",
+          "aria-label": "Testo del palloncino",
+          className: "chiaro-balloon-input",
+          style: {
+            display: "block",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            color: "#FBFAF4",
+            fontWeight: 600,
+            fontSize: "inherit",
+            fontFamily: FONT,
+            textAlign: "center",
+            width: "100%",
+            resize: "none",
+            overflow: "hidden",
+            lineHeight: 1.3,
+            padding: 0
+          }
+        }) : b.text || h("span", { style: { opacity: 0.75, fontWeight: 400 } }, "scrivi qui"),
+        h(
+          "button",
+          {
+            onPointerDown: (e) => e.stopPropagation(),
+            onClick: (e) => {
+              e.stopPropagation();
+              removeBranch(b.id);
+              if (editingId === b.id) setEditingId(null);
             },
-            /* @__PURE__ */ React.createElement(X, { size: 11 })
-          )
+            "aria-label": "Rimuovi ramo",
+            style: {
+              position: "absolute",
+              top: -8,
+              right: -8,
+              width: 20,
+              height: 20,
+              borderRadius: "50%",
+              border: "none",
+              background: C.rust,
+              color: "#FBFAF4",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              padding: 0
+            }
+          },
+          h(X, { size: 11 })
         )
-      );
-    })
-  )), editingNode ? /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 18px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Modifica ramo"), /* @__PURE__ */ React.createElement(
-    "button",
+      )
+    );
+  });
+
+  const canvas = h(
+    "div",
     {
-      onClick: () => setEditingId(null),
+      ref: viewportRef,
+      "data-map-viewport": "1",
       style: {
-        background: "none",
-        border: "none",
-        color: C.blue,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: FONT,
-        fontSize: "calc(0.9em * var(--fs))"
+        position: "relative",
+        width: "100%",
+        height: box.h || 480,
+        overflow: "auto",
+        touchAction: "pan-x pan-y",
+        overscrollBehavior: "contain",
+        borderRadius: 14,
+        background: "rgba(46,43,39,0.025)",
+        border: `1px dashed ${C.border}`
       }
     },
-    "Fatto"
-  )), /* @__PURE__ */ React.createElement("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: "0 0 12px" } }, "Scrivi il testo direttamente nel palloncino qui sopra."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 7, marginBottom: 12, flexWrap: "wrap" } }, MAP_COLORS.map((c) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: c,
-      onClick: () => updateBranch(editingNode.id, { color: c }),
-      "aria-label": "Colore",
-      style: {
-        width: 28,
-        height: 28,
-        borderRadius: "50%",
-        background: c,
-        border: editingNode.color === c ? `2.5px solid ${C.ink}` : "2.5px solid transparent",
-        cursor: "pointer",
-        padding: 0
-      }
-    }
-  ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } }, SIZES.map((s) => /* @__PURE__ */ React.createElement(
+    h(
+      "div",
+      {
+        ref: canvasRef,
+        onClick: handleCanvasClick,
+        style: { position: "relative", width: W, height: H, cursor: "copy" }
+      },
+      h(
+        "svg",
+        {
+          viewBox: "0 0 100 100",
+          preserveAspectRatio: "none",
+          style: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }
+        },
+        edges.map((e) => {
+          const p1 = posOf(e.a);
+          const p2 = posOf(e.b);
+          return h("line", { key: e.id, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, stroke: edgeColor(e), strokeWidth: Math.max(1, 2 * mz), vectorEffect: "non-scaling-stroke" });
+        })
+      ),
+      center,
+      bubbles
+    )
+  );
+
+  const sizeRow = (current, onPick) => h("div", { style: { display: "flex", gap: 8, marginBottom: 10 } }, SIZES.map((s) => h(
     "button",
     {
       key: s.l,
-      onClick: () => updateBranch(editingNode.id, { scale: s.v }),
+      onClick: () => onPick(s.v),
+      "aria-pressed": current === s.v,
       style: {
         flex: 1,
         padding: "8px",
         borderRadius: 10,
-        border: `1.5px solid ${editingNode.scale === s.v ? C.blue : C.border}`,
-        background: editingNode.scale === s.v ? C.blue : C.card,
-        color: editingNode.scale === s.v ? "#FBFAF4" : C.ink,
+        border: `1.5px solid ${current === s.v ? C.blue : C.border}`,
+        background: current === s.v ? C.blue : C.card,
+        color: current === s.v ? "#FBFAF4" : C.ink,
         fontWeight: 700,
         cursor: "pointer",
         fontFamily: FONT,
@@ -25606,92 +26011,84 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
       }
     },
     s.l
-  ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } }, SHAPES.map((s) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: s.l,
-      onClick: () => updateBranch(editingNode.id, { radius: s.v }),
-      style: {
-        flex: 1,
-        padding: "8px",
-        borderRadius: 10,
-        border: `1.5px solid ${editingNode.radius === s.v ? C.blue : C.border}`,
-        background: editingNode.radius === s.v ? C.blue : C.card,
-        color: editingNode.radius === s.v ? "#FBFAF4" : C.ink,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: FONT,
-        fontSize: "calc(0.78em * var(--fs))"
-      }
-    },
-    s.l
-  ))), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => {
-        removeBranch(editingNode.id);
-        setEditingId(null);
+  )));
+
+  let panel;
+  if (editingCenter) {
+    panel = h("div", { style: { padding: "14px 4px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, h("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Argomento centrale"), h("button", { onClick: () => setEditingCenter(false), style: { background: "none", border: "none", color: C.blue, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))" } }, "Fatto")), h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: 0, flex: 1 } }, "Scrivi il titolo direttamente nel cerchio centrale, oppure dettalo."), h(DictateButton, { color: C.blue, size: 44, onResult: (t) => setTopic(t) })));
+  } else if (editingNode) {
+    panel = h("div", { style: { padding: "14px 4px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, h("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Modifica ramo"), h(
+      "button",
+      {
+        onClick: () => setEditingId(null),
+        style: { background: "none", border: "none", color: C.blue, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))" }
       },
-      style: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        width: "100%",
-        padding: "10px",
-        borderRadius: 12,
-        border: `1.5px solid ${C.rust}`,
-        background: "transparent",
-        color: C.rust,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: FONT,
-        fontSize: "calc(0.88em * var(--fs))"
+      "Fatto"
+    )), h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: "0 0 12px" } }, "Scrivi il testo direttamente nel palloncino qui sopra. La misura che scegli vale anche per i prossimi palloncini."), h("div", { style: { display: "flex", gap: 7, marginBottom: 12, flexWrap: "wrap" } }, MAP_COLORS.map((c) => h(
+      "button",
+      {
+        key: c,
+        onClick: () => updateBranch(editingNode.id, { color: c }),
+        "aria-label": "Colore",
+        style: { width: 28, height: 28, borderRadius: "50%", background: c, border: editingNode.color === c ? `2.5px solid ${C.ink}` : "2.5px solid transparent", cursor: "pointer", padding: 0 }
       }
-    },
-    /* @__PURE__ */ React.createElement(Trash2, { size: 15 }),
-    " Elimina ramo"
-  )) : /* @__PURE__ */ React.createElement("div", { style: { padding: "0 18px 20px", marginTop: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      value: draft,
-      onChange: (e) => setDraft(e.target.value),
-      onKeyDown: (e) => e.key === "Enter" && addBranch(),
-      placeholder: "Scrivi un ramo...",
-      style: {
-        flex: 1,
-        borderRadius: 14,
-        border: `1px solid ${C.border}`,
-        padding: "13px 14px",
-        fontFamily: FONT,
-        fontSize: "calc(0.95em * var(--fs))",
-        color: C.ink,
-        boxSizing: "border-box",
-        minWidth: 0
+    ))), sizeRow(editingNode.scale, (v) => chooseSize(editingNode.id, v)), h("div", { style: { display: "flex", gap: 8, marginBottom: 14 } }, SHAPES.map((s) => h(
+      "button",
+      {
+        key: s.l,
+        onClick: () => updateBranch(editingNode.id, { radius: s.v }),
+        style: {
+          flex: 1,
+          padding: "8px",
+          borderRadius: 10,
+          border: `1.5px solid ${editingNode.radius === s.v ? C.blue : C.border}`,
+          background: editingNode.radius === s.v ? C.blue : C.card,
+          color: editingNode.radius === s.v ? "#FBFAF4" : C.ink,
+          fontWeight: 700,
+          cursor: "pointer",
+          fontFamily: FONT,
+          fontSize: "calc(0.78em * var(--fs))"
+        }
+      },
+      s.l
+    ))), h(
+      "button",
+      {
+        onClick: () => {
+          removeBranch(editingNode.id);
+          setEditingId(null);
+        },
+        style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", padding: "10px", borderRadius: 12, border: `1.5px solid ${C.rust}`, background: "transparent", color: C.rust, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.88em * var(--fs))" }
+      },
+      h(Trash2, { size: 15 }),
+      " Elimina ramo"
+    ));
+  } else {
+    panel = h("div", { style: { padding: "0 4px 20px", marginTop: "auto" } }, h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, h(
+      "input",
+      {
+        value: draft,
+        onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => e.key === "Enter" && addBranch(),
+        placeholder: "Scrivi un ramo...",
+        style: { flex: 1, borderRadius: 14, border: `1px solid ${C.border}`, padding: "13px 14px", fontFamily: FONT, fontSize: "calc(0.95em * var(--fs))", color: C.ink, boxSizing: "border-box", minWidth: 0 }
       }
-    }
-  ), /* @__PURE__ */ React.createElement(DictateButton, { color: C.blue, size: 44, onResult: (t) => addBranchFromText(t) }), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: addBranch,
-      disabled: !draft.trim(),
-      "aria-label": "Aggiungi ramo",
-      style: {
-        width: 44,
-        height: 44,
-        borderRadius: 14,
-        border: "none",
-        background: draft.trim() ? C.blue : "#C7C4B8",
-        color: "#FBFAF4",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: draft.trim() ? "pointer" : "not-allowed",
-        flexShrink: 0
-      }
-    },
-    /* @__PURE__ */ React.createElement(Plus, { size: 20 })
-  ))));
+    ), h(DictateButton, { color: C.blue, size: 44, onResult: (t) => addBranchFromText(t) }), h(
+      "button",
+      {
+        onClick: addBranch,
+        disabled: !draft.trim(),
+        "aria-label": "Aggiungi ramo",
+        style: { width: 44, height: 44, borderRadius: 14, border: "none", background: draft.trim() ? C.blue : "#C7C4B8", color: "#FBFAF4", display: "flex", alignItems: "center", justifyContent: "center", cursor: draft.trim() ? "pointer" : "not-allowed", flexShrink: 0 }
+      },
+      h(Plus, { size: 20 })
+    )), h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginTop: 10 } }, h("span", { style: { color: C.inkSoft, fontSize: "calc(0.8em * var(--fs))", whiteSpace: "nowrap" } }, "Misura dei nuovi palloncini:"), h("div", { style: { flex: 1 } }, sizeRow(defaultScale, (v) => {
+      setDefaultScale(v);
+      writePref(MAP_SIZE_KEY, v);
+    }))));
+  }
+
+  return h("div", { style: { minHeight: "100%", display: "flex", flexDirection: "column" } }, !embedded && h(PageHeader, { title: "Mappa mentale", subtitle: topic }), toolbar, h("p", { style: { margin: "10px 4px 0", color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", lineHeight: 1.45 } }, hint), h("div", { style: { padding: "12px 0 16px" } }, canvas), panel);
 }
 function parseInterrogazioneResponse(raw) {
   const feedbackMatch = raw.match(/### FEEDBACK\s*([\s\S]*?)(?=### DOMANDA|### VALUTAZIONE_FINALE|$)/);
@@ -25765,7 +26162,7 @@ function MapPicker({ maps, onPick, onClose }) {
 }
 const INTERR_SPLIT_CSS = ".interr-split{display:flex;gap:16px;align-items:flex-start}.interr-split>.interr-chat{flex:1 1 380px;min-width:0}.interr-split>.interr-map{flex:1 1 420px;min-width:0;max-height:calc(100vh - 64px);overflow:auto;background:" + C.card + ";border:1px solid " + C.border + ";border-radius:16px;padding:14px;box-sizing:border-box}@media (max-width:820px){.interr-split{flex-direction:column;align-items:stretch}.interr-split>.interr-map{order:-1;max-height:46vh;flex:none}.interr-split>.interr-chat{flex:none}}";
 const INTERR_READ_KEY = "chiarostudio-interr-lettura";
-function InterrogazioneScreen({ onSave, archivio = [] }) {
+function InterrogazioneScreen({ onSave, archivio = [], visible = true, onProgressChange }) {
   const [image, setImage] = useState(null);
   const [argomento, setArgomento] = useState("");
   const [tier, setTier] = useState("veloce");
@@ -25802,21 +26199,27 @@ function InterrogazioneScreen({ onSave, archivio = [] }) {
     if (!next) voce.stop();
   };
   useEffect(() => {
-    if (!autoRead || status === "done") return;
+    if (!visible || !autoRead || status === "done") return;
     const idx = turni.length - 1;
     const t = turni[idx];
     if (!t || t.ruolo !== "insegnante" || idx <= lastReadRef.current) return;
     lastReadRef.current = idx;
     voce.speak(t.testo);
-  }, [turni, autoRead, status]);
+  }, [turni, autoRead, status, visible]);
   useEffect(() => {
-    if (status !== "done" || !autoRead || !valutazioneFinale) return;
+    if (!visible) voce.stop();
+  }, [visible]);
+  useEffect(() => {
+    if (onProgressChange) onProgressChange(status === "chat" || status === "loading" && turni.length > 0);
+  }, [status, turni.length]);
+  useEffect(() => {
+    if (!visible || status !== "done" || !autoRead || !valutazioneFinale) return;
     const idx = turni.length - 1;
     const t = turni[idx];
     const fb = t && t.ruolo === "insegnante" && idx > lastReadRef.current ? t.testo + "\n\n" : "";
     lastReadRef.current = idx;
     voce.speak(fb + valutazioneFinale);
-  }, [status, valutazioneFinale]);
+  }, [status, valutazioneFinale, visible]);
   const pickMap = (m) => {
     setMappa({ id: m.id, title: m.title, data: m.data });
     setPickerOpen(false);
@@ -26135,6 +26538,11 @@ function App() {
     loadSpeedPref();
   }, []);
   const [flashcardLaunch, setFlashcardLaunch] = useState(null);
+  const [interrAlive, setInterrAlive] = useState(false);
+  const [interrInProgress, setInterrInProgress] = useState(false);
+  useEffect(() => {
+    if (active === "interrogazione") setInterrAlive(true);
+  }, [active]);
   useEffect(() => {
     window.__chiaroBack = () => {
       if (active !== "home") {
@@ -26341,11 +26749,11 @@ function App() {
       }
     );
   } else if (active === "flashcard") {
-    content = /* @__PURE__ */ React.createElement(FlashcardScreen, { key: flashcardLaunch ? flashcardLaunch.nonce : "flashcard", onSave: addToArchivio, initialCards: flashcardLaunch ? flashcardLaunch.cards : null });
+    content = /* @__PURE__ */ React.createElement(FlashcardScreen, { key: flashcardLaunch ? flashcardLaunch.nonce : "flashcard", onSave: addToArchivio, archivio, initialCards: flashcardLaunch ? flashcardLaunch.cards : null });
   } else if (active === "quiz") {
     content = /* @__PURE__ */ React.createElement(QuizWebScreen, { onSave: addToArchivio });
   } else if (active === "interrogazione") {
-    content = /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio });
+    content = null;
   } else if (active === "mappe") {
     content = /* @__PURE__ */ React.createElement(
       MappaWebScreen,
@@ -26372,7 +26780,15 @@ function App() {
         @media (max-width: 640px) {
           .chiaro-content { padding: 18px 16px; }
         }
-      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, overflowY: "auto" } }, content));
+      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, overflowY: "auto" } }, content, interrAlive && !(SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes("interrogazione") && !isSubscribed) && /* @__PURE__ */ React.createElement("div", { style: { display: active === "interrogazione" ? "block" : "none" } }, /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio, visible: active === "interrogazione", onProgressChange: setInterrInProgress })), interrInProgress && active !== "interrogazione" && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setActive("interrogazione"),
+      style: { position: "fixed", right: 16, bottom: 16, zIndex: 50, display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderRadius: 999, border: "none", background: "#6B5B95", color: "#FBFAF4", fontWeight: 700, fontFamily: FONT, fontSize: "calc(0.92em * var(--fs))", boxShadow: "0 8px 22px rgba(46,43,39,0.25)", cursor: "pointer" }
+    },
+    /* @__PURE__ */ React.createElement(MessageSquare, { size: 16 }),
+    " Torna all'interrogazione"
+  )));
 }
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ React.createElement(App, null));
