@@ -25491,6 +25491,8 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const viewportRef = useRef(null);
   const dragInfoRef = useRef({ x: 0, y: 0, moved: false, id: null });
   const lastTapRef = useRef({ time: 0, x: 0, y: 0 });
+  // ultimo palloncino scritto: il nuovo palloncino (doppio tocco) si collega a lui
+  const lastEditedRef = useRef(null);
   const pinchRef = useRef(null);
   const pinchingRef = useRef(false);
   const zoomRef = useRef(1);
@@ -25602,7 +25604,12 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const finishEditing = () => {
     if (editingId !== null) {
       const nb = branches.find((b) => b.id === editingId);
-      if (nb && !String(nb.text || "").trim()) removeBranch(editingId);
+      if (nb && !String(nb.text || "").trim()) {
+        removeBranch(editingId);
+        if (lastEditedRef.current === editingId) lastEditedRef.current = null;
+      } else if (nb) {
+        lastEditedRef.current = editingId;
+      }
     }
     setEditingId(null);
     setEditingCenter(false);
@@ -25618,7 +25625,8 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     }
     if (editingId !== null || editingCenter) {
       finishEditing();
-      lastTapRef.current = { time: 0, x: 0, y: 0 };
+      // questo tocco conta come primo tocco: se ne segue subito un altro, nasce un palloncino nuovo
+      lastTapRef.current = { time: Date.now(), x: clientX, y: clientY };
       return;
     }
     if (!canvasRef.current) return;
@@ -25627,7 +25635,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     const y = clamp((clientY - rect.top) / rect.height * 100, 8, 92);
     const now = Date.now();
     const last = lastTapRef.current;
-    const isDoubleTap = now - last.time < 400 && Math.abs(x - last.x) < 8 && Math.abs(y - last.y) < 8;
+    const isDoubleTap = now - last.time < 450 && Math.abs(clientX - last.x) < 40 && Math.abs(clientY - last.y) < 40;
     if (isDoubleTap) {
       lastTapRef.current = { time: 0, x: 0, y: 0 };
       const idx = branches.length;
@@ -25640,13 +25648,14 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         scale: defaultScale,
         radius: 12
       };
-      const parentId = nearestNodeId(nb.id, x, y, Infinity) || "center";
+      const lastId = lastEditedRef.current;
+      const parentId = lastId !== null && branches.some((b) => b.id === lastId) ? lastId : nearestNodeId(nb.id, x, y, Infinity) || "center";
       setBranches((prev) => [...prev, nb]);
       setEdges((prev) => [...prev, { id: `e-${nb.id}`, a: parentId, b: nb.id }]);
       setEditingCenter(false);
       setEditingId(nb.id);
     } else {
-      lastTapRef.current = { time: now, x, y };
+      lastTapRef.current = { time: now, x: clientX, y: clientY };
     }
   };
   const vpPointerDownCapture = (e) => {
@@ -25910,7 +25919,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     "Nuova"
   ));
 
-  const hint = collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Un dito: sposti la mappa o un palloncino. Due dita: zoom. Tocca un palloncino per scriverci, poi tocca uno spazio vuoto per confermare. Tieni premuto il bordo di un palloncino e trascina a destra o a sinistra per cambiarne la larghezza. Doppio tocco sullo sfondo: nuovo palloncino." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo. Tocca il cerchio centrale per cambiarne il titolo. Un dito sposta la mappa, due dita fanno lo zoom.";
+  const hint = collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Un dito: sposti la mappa o un palloncino. Due dita: zoom. Tocca un palloncino per scriverci, poi tocca uno spazio vuoto per confermare. Tieni premuto il bordo di un palloncino e trascina a destra o a sinistra per cambiarne la larghezza. Doppio tocco sullo sfondo: nuovo palloncino, collegato all'ultimo che hai scritto (per spostare il collegamento, trascinalo su un altro palloncino)." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo. Tocca il cerchio centrale per cambiarne il titolo. Un dito sposta la mappa, due dita fanno lo zoom.";
 
   const center = h(
     "div",
@@ -26766,7 +26775,7 @@ Segni speciali nei testi (servono all'app per colorare e mettere in evidenza):
 - Nel testo normale racchiudi OGNI volta che citi una variabile, sia col nome sia col simbolo, tra doppie parentesi quadre: [[raggio]], [[r]], [[area]], [[A]]. Mai lasciarne una senza parentesi.
 - Racchiudi OGNI formula e OGNI calcolo tra apici inversi: \`A = \u03C0 \xB7 r\xB2\`, \`3\xB2 + 4\xB2 = 25\`. Dentro gli apici inversi scrivi i simboli normalmente, senza le parentesi quadre.
 - I numeri scrivili normalmente (l'app li mette in grassetto da sola).
-- Se un disegno aiuta (geometria, grafici, frazioni), mettilo nel campo "diagramma" come SVG semplice: viewBox circa 0 0 320 220, solo linee sottili, colore currentColor, sfondo trasparente, etichette leggibili (font-size 13 o pi\xF9). Negli attributi SVG usa SEMPRE gli apici singoli (es. stroke='currentColor'), mai le virgolette doppie. Se il disegno non serve, lascia "".
+- Non disegnare figure. Se un'immagine aiuta (figure geometriche, grafici, frazioni...), nel campo "immagine" scrivi in INGLESE poche parole per cercare un disegno su Wikimedia Commons che mostri proprio quella figura (es. "right triangle hypotenuse legs", "circle radius diameter", "trapezoid height bases", "fraction pie chart three quarters"). Se non serve un'immagine, lascia "".
 
 La domanda di verifica di ogni unit\xE0:
 - \xE8 una domanda a scelta multipla con 3 opzioni, una sola corretta, che controlla proprio l'idea spiegata in quell'unit\xE0;
@@ -26776,7 +26785,7 @@ La domanda di verifica di ogni unit\xE0:
 Alla fine metti 3 esercizi di difficolt\xE0 crescente (dal pi\xF9 facile al pi\xF9 impegnativo), con il risultato e lo svolgimento passo per passo.
 
 Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo, con questa forma:
-{"titolo":"...","variabili":[{"simbolo":"r","nome":"raggio"}],"introduzione":"2-3 frasi su cosa impareremo e a cosa serve","unita":[{"titolo":"...","spiegazione":"...","esempio":"esempio svolto passo per passo","diagramma":"","verifica":{"domanda":"...","opzioni":[{"testo":"...","corretta":true,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."}]}}],"esercizi":[{"testo":"...","risultato":"...","svolgimento":"- passaggio 1\\n- passaggio 2"}]}
+{"titolo":"...","variabili":[{"simbolo":"r","nome":"raggio"}],"introduzione":"2-3 frasi su cosa impareremo e a cosa serve","unita":[{"titolo":"...","spiegazione":"...","esempio":"esempio svolto passo per passo","immagine":"right triangle hypotenuse legs","verifica":{"domanda":"...","opzioni":[{"testo":"...","corretta":true,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."}]}}],"esercizi":[{"testo":"...","risultato":"...","svolgimento":"- passaggio 1\\n- passaggio 2"}]}
 Le unit\xE0 devono essere da 4 a 6. Se l'argomento non \xE8 di matematica o geometria, prepara comunque la lezione sulla parte matematica pi\xF9 vicina all'argomento.`;
 const MATE_CHECK_SYSTEM = `Sei un insegnante di matematica paziente che corregge l'esercizio di uno studente con DSA. Ricevi il testo dell'esercizio, il risultato giusto, lo svolgimento giusto e la risposta dello studente (a volte con i suoi passaggi).
 - Accetta come giuste le risposte equivalenti: 0,5 = 1/2 = 50%; virgola o punto decimale; unit\xE0 di misura mancanti o scritte in altro modo; piccoli arrotondamenti ragionevoli.
@@ -26812,6 +26821,7 @@ function normalizeLesson(obj) {
       spiegazione: String(u && u.spiegazione || ""),
       esempio: String(u && u.esempio || ""),
       diagramma: sanitizeSvg(String(u && u.diagramma || "").replace(/\\"/g, '"')) || "",
+      immagine: String(u && u.immagine || "").trim().slice(0, 80),
       verifica: opzioni.length >= 2 ? { domanda: String(v.domanda || "Quale risposta \xE8 giusta?"), opzioni: shuffleArr(opzioni) } : null
     };
   });
@@ -26827,7 +26837,7 @@ function normalizeLesson(obj) {
 }
 function mateCacheKey(topic, livello) {
   const t = normalizeTopic(topic || "");
-  return t && t.length <= 80 ? `matematica2:${livello}:${t}` : null;
+  return t && t.length <= 80 ? `matematica3:${livello}:${t}` : null;
 }
 function loadMateLocal() {
   try {
@@ -27026,6 +27036,103 @@ function MiniSpeak({ text }) {
     style: { flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: `1.5px solid ${MATE_COLOR}`, background: speaking ? MATE_COLOR : "transparent", color: speaking ? "#FBFAF4" : MATE_COLOR, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }
   }, speaking ? React.createElement(Square, { size: 13 }) : React.createElement(Volume2, { size: 14 }));
 }
+const MATE_IMG_CACHE = {};
+async function searchCommonsDrawings(query) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+  if (MATE_IMG_CACHE[q]) return MATE_IMG_CACHE[q];
+  if (isOffline()) throw new Error(OFFLINE_MESSAGE);
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    origin: "*",
+    generator: "search",
+    gsrsearch: q + " filetype:drawing",
+    gsrnamespace: "6",
+    gsrlimit: "10",
+    prop: "imageinfo",
+    iiprop: "url|mime|extmetadata",
+    iiextmetadatafilter: "Artist|LicenseShortName",
+    iiurlwidth: "640"
+  });
+  const res = await fetch("https://commons.wikimedia.org/w/api.php?" + params.toString());
+  if (!res.ok) throw new Error("Non riesco a cercare le immagini adesso. Riprova tra poco.");
+  const data = await res.json();
+  const pages = data && data.query && data.query.pages || [];
+  const out = pages.slice().sort((a, b) => (a.index || 0) - (b.index || 0)).map((p) => {
+    const ii = p.imageinfo && p.imageinfo[0] || {};
+    const meta = ii.extmetadata || {};
+    const strip = (v) => String(v && v.value || "").replace(/<[^>]+>/g, "").trim();
+    return { title: String(p.title || "").replace(/^File:/, "").replace(/\.[a-z]+$/i, ""), thumb: ii.thumburl || "", page: ii.descriptionurl || "", author: strip(meta.Artist).slice(0, 60), license: strip(meta.LicenseShortName) };
+  }).filter((x) => x.thumb && !isBlockedText(x.title)).slice(0, 4);
+  MATE_IMG_CACHE[q] = out;
+  return out;
+}
+function MateImages({ query, label }) {
+  const h = React.createElement;
+  const [q, setQ] = useState(query || "");
+  const [draft, setDraft] = useState("");
+  const [state, setState] = useState({ status: "idle", items: [] });
+  const [big, setBig] = useState(null);
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    if (!q || !open) return;
+    let alive = true;
+    setState({ status: "loading", items: [] });
+    searchCommonsDrawings(q).then((items) => alive && setState({ status: "done", items })).catch((e) => alive && setState({ status: "error", items: [], error: e.message }));
+    return () => {
+      alive = false;
+    };
+  }, [q, open]);
+  const googleUrl = "https://www.google.com/search?tbm=isch&safe=active&q=" + encodeURIComponent((label || q) + " disegno geometria");
+  const linkBtn = { ...secondaryBtnStyle, padding: "6px 10px", fontSize: "calc(0.8em * var(--fs))", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 };
+  return h(
+    "div",
+    { "data-mate-images": q, "data-mate-nodict": "1", style: { border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, margin: "12px 0", background: "#fff" } },
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: open ? 10 : 0 } },
+      h("span", { style: { fontWeight: 700, color: C.ink, flex: "1 1 160px", fontSize: "calc(0.9em * var(--fs))" } }, "\u{1F5BC}\uFE0F Immagini"),
+      h("a", { href: googleUrl, target: "_blank", rel: "noopener noreferrer", style: linkBtn }, "Cerca su Google Immagini \u2197"),
+      h("button", { onClick: () => setOpen(!open), style: linkBtn }, open ? "Nascondi" : "Mostra")
+    ),
+    open && h(
+      React.Fragment,
+      null,
+      state.status === "loading" && h("p", { style: { color: C.inkSoft, margin: 0 } }, "Cerco le immagini\u2026"),
+      state.status === "error" && h("p", { style: { color: C.wine, margin: 0 } }, state.error),
+      state.status === "done" && state.items.length === 0 && h("p", { style: { color: C.inkSoft, margin: 0 } }, "Non ho trovato immagini adatte. Prova con altre parole qui sotto o su Google Immagini."),
+      state.items.length > 0 && h(
+        "div",
+        { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))", gap: 8 } },
+        state.items.map((it, i) => h("button", { key: i, onClick: () => setBig(it), title: it.title, "aria-label": "Ingrandisci: " + it.title, style: { padding: 4, border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff", cursor: "zoom-in", height: 100, display: "flex", alignItems: "center", justifyContent: "center" } }, h("img", { src: it.thumb, alt: it.title, loading: "lazy", style: { maxWidth: "100%", maxHeight: "100%", objectFit: "contain" } })))
+      ),
+      h(
+        "form",
+        { onSubmit: (e) => {
+          e.preventDefault();
+          if (draft.trim()) setQ(draft.trim());
+        }, style: { display: "flex", gap: 6, marginTop: 10 } },
+        h("input", { value: draft, onChange: (e) => setDraft(e.target.value), placeholder: "Cerca un'altra immagine (es. trapezio)", "aria-label": "Cerca un'altra immagine", style: { flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 10, border: `1px solid ${C.border}`, fontFamily: FONT, fontSize: "calc(0.85em * var(--fs))" } }),
+        h("button", { type: "submit", style: linkBtn }, "Cerca")
+      ),
+      h("p", { style: { color: C.inkSoft, fontSize: "calc(0.72em * var(--fs))", margin: "8px 0 0" } }, "Immagini da Wikimedia Commons, con i nomi degli autori.")
+    ),
+    big && h(
+      "div",
+      { onClick: () => setBig(null), role: "dialog", "aria-label": big.title, style: { position: "fixed", inset: 0, background: "rgba(20,28,38,0.75)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+      h(
+        "div",
+        { onClick: (e) => e.stopPropagation(), style: { background: "#fff", borderRadius: 16, padding: 14, maxWidth: 720, width: "100%", maxHeight: "90vh", overflow: "auto" } },
+        h("img", { src: big.thumb, alt: big.title, style: { width: "100%", maxHeight: "65vh", objectFit: "contain", display: "block" } }),
+        h("p", { style: { color: C.ink, margin: "10px 0 4px", fontWeight: 700 } }, big.title),
+        h("p", { style: { color: C.inkSoft, margin: "0 0 10px", fontSize: "calc(0.8em * var(--fs))" } }, [big.author && "Autore: " + big.author, big.license && "Licenza: " + big.license, "Wikimedia Commons"].filter(Boolean).join(" \xB7 "), big.page && " \xB7 ", big.page && h("a", { href: big.page, target: "_blank", rel: "noopener noreferrer", style: { color: MATE_COLOR } }, "pagina dell'immagine")),
+        h("button", { onClick: () => setBig(null), style: secondaryBtnStyle }, "Chiudi")
+      )
+    )
+  );
+}
 function MateDiagram({ svg }) {
   if (!svg) return null;
   return React.createElement("div", { className: "mate-diagram", style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, margin: "12px 0", color: C.ink, textAlign: "center" }, dangerouslySetInnerHTML: { __html: svg } });
@@ -27211,7 +27318,7 @@ function MatematicaScreen({ onSave, initialState, onStateChange, archivio = [] }
         h(SpeakButton, { text: plainMath(speech), color: MATE_COLOR })
       ),
       h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.65 } }, h(MathText, { text: u.spiegazione })),
-      h(MateDiagram, { svg: u.diagramma }),
+      u.immagine ? h(MateImages, { query: u.immagine, label: u.titolo }) : h(MateDiagram, { svg: u.diagramma }),
       u.esempio && h(
         "div",
         { className: easyRead ? "chiaro-easy" : void 0, style: { background: "rgba(160,103,45,0.07)", borderLeft: `4px solid ${MATE_COLOR}`, borderRadius: 10, padding: "12px 14px", margin: "12px 0", color: C.ink, lineHeight: 1.6 } },
@@ -27371,15 +27478,20 @@ function MatematicaScreen({ onSave, initialState, onStateChange, archivio = [] }
     ),
     source !== "new" && h("p", { style: { ...small, margin: "-6px 0 14px" } }, "Lezione gi\xE0 pronta su questo argomento. ", h("button", { onClick: () => start(true), style: { background: "none", border: "none", padding: 0, color: MATE_COLOR, textDecoration: "underline", cursor: "pointer", fontFamily: FONT, fontSize: "inherit" } }, "Preparane una nuova versione")),
     lesson.introduzione && h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { ...card, background: "rgba(160,103,45,0.06)", color: C.ink, lineHeight: 1.6 } }, h("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, h("div", { style: { flex: 1 } }, h(MathText, { text: lesson.introduzione })), h(MiniSpeak, { text: lesson.introduzione }))),
+    h(
+      "div",
+      { "data-mate-video": "1", "data-mate-nodict": "1", style: { ...card, padding: 16 } },
+      h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 4 } }, "\u25B6\uFE0F Prima di iniziare: un video sull'argomento"),
+      h("p", { style: { ...small, margin: "0 0 10px" } }, "Se vuoi, guarda un video che spiega l'argomento, poi segui la lezione qui sotto."),
+      h(TopicVideoBox, { topic: topic.trim().length <= 60 && topic.trim() ? topic.trim() : lesson.titolo, color: MATE_COLOR, state: videoState, onState: setVideoState })
+    ),
     units.slice(0, Math.min(current + 1, total)).map(renderUnit),
     allUnitsDone && h(
       "div",
       { ref: (el) => unitRefs.current.esercizi = el, style: { scrollMarginTop: 16 } },
       withCheck > 0 && h("div", { style: { ...card, background: "rgba(107,143,94,0.1)", border: "1px solid rgba(107,143,94,0.35)", color: C.ink } }, h("b", null, "Hai finito le unit\xE0! "), `Hai risposto giusto al primo tentativo a ${firstTry} verifiche su ${withCheck}.`, firstTry < withCheck ? " Le unit\xE0 dove hai sbagliato si possono rileggere toccando il loro numero qui sopra." : " Ottimo lavoro!"),
       lesson.esercizi.length > 0 && h("h2", { style: { fontFamily: SERIF, fontWeight: 500, color: C.ink, fontSize: "calc(1.45em * var(--fs))", margin: "22px 0 12px" } }, "Esercizi finali"),
-      lesson.esercizi.map(renderExercise),
-      h("h2", { style: { fontFamily: SERIF, fontWeight: 500, color: C.ink, fontSize: "calc(1.45em * var(--fs))", margin: "22px 0 12px" } }, "Un video per ripassare"),
-      h(TopicVideoBox, { topic: topic.trim().length <= 60 && topic.trim() ? topic.trim() : lesson.titolo, color: MATE_COLOR, state: videoState, onState: setVideoState })
+      lesson.esercizi.map(renderExercise)
     )
     ),
     wordLookup && h(WordDefinitionSheet, { lookup: wordLookup, color: C.wine, onClose: () => {
