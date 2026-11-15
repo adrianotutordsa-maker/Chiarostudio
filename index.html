@@ -26418,7 +26418,7 @@ function savedMapsFromArchivio(archivio, argomento) {
     out.push({
       id: it.id,
       title: data.topic || it.title || "Mappa",
-      source: it.type === "mappa" ? "Mappa mentale" : "Mappa accanto al riassunto",
+      source: it.type === "mappa" ? "Mappa mentale" : it.type === "matematica" ? "Mappa della lezione di matematica" : "Mappa accanto al riassunto",
       data,
       savedAt: it.savedAt || 0
     });
@@ -26760,6 +26760,12 @@ Regole di stile:
 - Scrivi i calcoli in modo leggibile, un passaggio per riga, con simboli normali: \xB2 \xB3 √ π \xB7 : \xD7 ≤ ≥ ≠, frazioni come 3/4. Niente LaTeX, niente simboli $.
 - Usa esempi concreti della vita di tutti i giorni quando aiutano (una pizza divisa in fette, un giardino da recintare...).
 - Nei testi puoi usare "- " a inizio riga per gli elenchi o i passaggi, e **grassetto** per le parole chiave. Non usare titoli con #.
+
+Segni speciali nei testi (servono all'app per colorare e mettere in evidenza):
+- Nel campo "variabili" elenca TUTTE le grandezze e le variabili usate nella lezione, con simbolo e nome (es. {"simbolo":"r","nome":"raggio"}, {"simbolo":"A","nome":"area"}, {"simbolo":"x","nome":"incognita"}).
+- Nel testo normale racchiudi OGNI volta che citi una variabile, sia col nome sia col simbolo, tra doppie parentesi quadre: [[raggio]], [[r]], [[area]], [[A]]. Mai lasciarne una senza parentesi.
+- Racchiudi OGNI formula e OGNI calcolo tra apici inversi: \`A = \u03C0 \xB7 r\xB2\`, \`3\xB2 + 4\xB2 = 25\`. Dentro gli apici inversi scrivi i simboli normalmente, senza le parentesi quadre.
+- I numeri scrivili normalmente (l'app li mette in grassetto da sola).
 - Se un disegno aiuta (geometria, grafici, frazioni), mettilo nel campo "diagramma" come SVG semplice: viewBox circa 0 0 320 220, solo linee sottili, colore currentColor, sfondo trasparente, etichette leggibili (font-size 13 o pi\xF9). Negli attributi SVG usa SEMPRE gli apici singoli (es. stroke='currentColor'), mai le virgolette doppie. Se il disegno non serve, lascia "".
 
 La domanda di verifica di ogni unit\xE0:
@@ -26770,7 +26776,7 @@ La domanda di verifica di ogni unit\xE0:
 Alla fine metti 3 esercizi di difficolt\xE0 crescente (dal pi\xF9 facile al pi\xF9 impegnativo), con il risultato e lo svolgimento passo per passo.
 
 Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo, con questa forma:
-{"titolo":"...","introduzione":"2-3 frasi su cosa impareremo e a cosa serve","unita":[{"titolo":"...","spiegazione":"...","esempio":"esempio svolto passo per passo","diagramma":"","verifica":{"domanda":"...","opzioni":[{"testo":"...","corretta":true,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."}]}}],"esercizi":[{"testo":"...","risultato":"...","svolgimento":"- passaggio 1\\n- passaggio 2"}]}
+{"titolo":"...","variabili":[{"simbolo":"r","nome":"raggio"}],"introduzione":"2-3 frasi su cosa impareremo e a cosa serve","unita":[{"titolo":"...","spiegazione":"...","esempio":"esempio svolto passo per passo","diagramma":"","verifica":{"domanda":"...","opzioni":[{"testo":"...","corretta":true,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."}]}}],"esercizi":[{"testo":"...","risultato":"...","svolgimento":"- passaggio 1\\n- passaggio 2"}]}
 Le unit\xE0 devono essere da 4 a 6. Se l'argomento non \xE8 di matematica o geometria, prepara comunque la lezione sulla parte matematica pi\xF9 vicina all'argomento.`;
 const MATE_CHECK_SYSTEM = `Sei un insegnante di matematica paziente che corregge l'esercizio di uno studente con DSA. Ricevi il testo dell'esercizio, il risultato giusto, lo svolgimento giusto e la risposta dello studente (a volte con i suoi passaggi).
 - Accetta come giuste le risposte equivalenti: 0,5 = 1/2 = 50%; virgola o punto decimale; unit\xE0 di misura mancanti o scritte in altro modo; piccoli arrotondamenti ragionevoli.
@@ -26778,6 +26784,7 @@ const MATE_CHECK_SYSTEM = `Sei un insegnante di matematica paziente che corregge
 - Se \xE8 sbagliata NON limitarti a dire "hai sbagliato": individua il punto preciso dell'errore (es. "nel secondo passaggio hai sommato i lati invece di moltiplicarli"), spiega perch\xE9 \xE8 sbagliato e mostra come si fa nel modo giusto, passo per passo. Se lo studente ha scritto solo il risultato, ricostruisci l'errore pi\xF9 probabile che porta al suo numero e dillo come ipotesi ("Probabilmente hai...").
 - Se la risposta \xE8 quasi giusta (es. calcolo giusto ma errore di segno, di unit\xE0 di misura o di arrotondamento) usa "quasi".
 - Frasi brevi e gentili, simboli normali (\xB2 √ π \xB7), niente LaTeX. Puoi usare "- " per i passaggi.
+- Racchiudi ogni variabile citata nel testo (nome o simbolo) tra doppie parentesi quadre, es. [[raggio]] o [[r]], e ogni formula o calcolo tra apici inversi, es. \`2 \xB7 3 = 6\`.
 Rispondi SOLO con JSON valido: {"esito":"giusto"|"quasi"|"sbagliato","spiegazione":"..."}`;
 function parseJsonLoose(raw) {
   const cleaned = String(raw || "").replace(/```json|```/g, "").trim();
@@ -26809,11 +26816,18 @@ function normalizeLesson(obj) {
     };
   });
   const esercizi = (Array.isArray(obj.esercizi) ? obj.esercizi : []).map((e) => ({ testo: String(e && e.testo || ""), risultato: String(e && e.risultato || ""), svolgimento: String(e && e.svolgimento || "") })).filter((e) => e.testo);
-  return { titolo: String(obj.titolo || "Lezione"), introduzione: String(obj.introduzione || ""), unita, esercizi };
+  const seen = {};
+  const variabili = (Array.isArray(obj.variabili) ? obj.variabili : []).map((v) => ({ simbolo: String(v && v.simbolo || "").trim(), nome: String(v && v.nome || "").trim() })).filter((v) => {
+    const k = v.simbolo + "|" + v.nome.toLowerCase();
+    if (!(v.simbolo || v.nome) || seen[k]) return false;
+    seen[k] = 1;
+    return true;
+  }).slice(0, 16).map((v, i) => ({ ...v, colore: MATE_VAR_COLORS[i % MATE_VAR_COLORS.length] }));
+  return { titolo: String(obj.titolo || "Lezione"), introduzione: String(obj.introduzione || ""), variabili, unita, esercizi };
 }
 function mateCacheKey(topic, livello) {
   const t = normalizeTopic(topic || "");
-  return t && t.length <= 80 ? `matematica:${livello}:${t}` : null;
+  return t && t.length <= 80 ? `matematica2:${livello}:${t}` : null;
 }
 function loadMateLocal() {
   try {
@@ -26873,10 +26887,11 @@ Livello: ${livelloTesto}`, maxTokens: 8e3 });
   }
   return { lesson, source: "new" };
 }
-async function checkMathExercise(ex, answer) {
+async function checkMathExercise(ex, answer, variabili) {
   const raw = await callClaude({
     system: MATE_CHECK_SYSTEM,
-    userText: `Esercizio: ${ex.testo}
+    userText: `Variabili della lezione: ${(variabili || []).map((v) => `${v.simbolo} = ${v.nome}`).join("; ") || "nessuna"}
+Esercizio: ${ex.testo}
 Risultato giusto: ${ex.risultato}
 Svolgimento giusto:
 ${ex.svolgimento}
@@ -26893,13 +26908,118 @@ ${answer}`,
     return { esito: "sbagliato", spiegazione: raw };
   }
 }
+const MATE_VAR_COLORS = ["#1E7FD8", "#D9480F", "#7B3FC4", "#0B8A6A", "#C2187A", "#8A6A00", "#2F55C9", "#B42318"];
+const MateVarsContext = React.createContext(null);
+function escapeRegExp(t) {
+  return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildMateVarIndex(vars) {
+  const list = (vars || []).slice();
+  const bySym = {};
+  const byName = {};
+  list.forEach((v) => {
+    if (v.simbolo) bySym[v.simbolo] = v;
+    if (v.nome) byName[v.nome.toLowerCase()] = v;
+  });
+  const names = list.filter((v) => v.nome && v.nome.length > 2).map((v) => v.nome).sort((a, b) => b.length - a.length);
+  let nameRe = null;
+  try {
+    if (names.length) nameRe = new RegExp("(?<![\\p{L}])(" + names.map(escapeRegExp).join("|") + ")(?![\\p{L}])", "giu");
+  } catch {
+    nameRe = null;
+  }
+  const extra = {};
+  let next = list.length;
+  const find = (token) => {
+    const t = String(token || "").trim();
+    if (!t) return null;
+    if (bySym[t]) return bySym[t];
+    const low = t.toLowerCase();
+    if (byName[low]) return byName[low];
+    const plural = Object.keys(byName).find((n) => n.length > 3 && (low.startsWith(n.slice(0, -1)) && low.length <= n.length + 1));
+    if (plural) return byName[plural];
+    return null;
+  };
+  const colorFor = (token) => {
+    const v = find(token);
+    if (v) return v.colore;
+    const k = String(token).trim().toLowerCase();
+    if (!extra[k]) extra[k] = MATE_VAR_COLORS[next++ % MATE_VAR_COLORS.length];
+    return extra[k];
+  };
+  return { list, find, colorFor, nameRe };
+}
+function plainMath(text) {
+  return String(text || "").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/`/g, "").replace(/\*\*/g, "");
+}
+const MATE_NUM_RE = /((?<![\p{L}\d])\d+(?:[.,]\d+)*(?:\/\d+)?[²³]?(?:\s?(?:%|°|cm²|cm³|cm|mm²|mm|dm²|dm|m²|m³|km²|km|kg|g|ml|l|€)(?![\p{L}]))?)/u;
+function MathText({ text, block = true }) {
+  const idx = React.useContext(MateVarsContext) || buildMateVarIndex([]);
+  const h = React.createElement;
+  let k = 0;
+  const varSpan = (label, token) => h("span", { key: "v" + k++, "data-mate-var": token || label, style: { color: idx.colorFor(token || label), fontWeight: 700 } }, label);
+  const numbers = (str) => str.split(MATE_NUM_RE).map((part, i) => i % 2 === 1 ? h("b", { key: "n" + k++, "data-mate-num": "1" }, part) : part || null);
+  const prose = (str) => {
+    if (!idx.nameRe || !str) return numbers(str);
+    const out = [];
+    let last = 0;
+    idx.nameRe.lastIndex = 0;
+    let m;
+    while (m = idx.nameRe.exec(str)) {
+      if (m.index > last) out.push(...numbers(str.slice(last, m.index)));
+      out.push(varSpan(m[0], m[0]));
+      last = m.index + m[0].length;
+      if (m[0].length === 0) idx.nameRe.lastIndex++;
+    }
+    if (last < str.length) out.push(...numbers(str.slice(last)));
+    return out;
+  };
+  const formula = (f) => {
+    const clean = f.replace(/\[\[([^\]]+)\]\]/g, "$1");
+    const parts = clean.split(/([\p{L}]+[₀-₉]*)/u);
+    return h("b", { key: "f" + k++, "data-mate-formula": "1", style: { whiteSpace: "nowrap" } }, parts.map((p, i) => {
+      if (i % 2 === 1) {
+        const v = idx.find(p);
+        if (v) return h("span", { key: i, "data-mate-var": p, style: { color: v.colore } }, p);
+      }
+      return p;
+    }));
+  };
+  const inline = (str) => {
+    const parts = String(str).split(/(\*\*[^*]+\*\*|`[^`]+`|\[\[[^\]]+\]\])/);
+    return parts.map((p) => {
+      if (!p) return null;
+      if (p.startsWith("**") && p.endsWith("**") && p.length > 4) return h("b", { key: "b" + k++ }, prose(p.slice(2, -2)));
+      if (p.startsWith("`") && p.endsWith("`") && p.length > 2) return formula(p.slice(1, -1));
+      if (p.startsWith("[[") && p.endsWith("]]")) return varSpan(p.slice(2, -2), p.slice(2, -2));
+      return h(React.Fragment, { key: "t" + k++ }, prose(p));
+    });
+  };
+  if (!block) return h(React.Fragment, null, inline(text));
+  const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  return h("div", { className: "mate-text" }, lines.map((line, i) => {
+    const bullet = line.match(/^[-•]\s+(.*)$/);
+    if (bullet) return h("div", { key: i, className: "fl-line", style: { display: "flex", gap: 8, margin: "0 0 6px" } }, h("span", { style: { color: MATE_COLOR, fontWeight: 700 } }, "\u2022"), h("span", { style: { flex: 1 } }, inline(bullet[1])));
+    return h("p", { key: i, className: "fl-line", style: { margin: "0 0 8px" } }, inline(line));
+  }));
+}
+function MateLegend({ vars }) {
+  if (!vars || !vars.length) return null;
+  const h = React.createElement;
+  return h(
+    "div",
+    { "aria-label": "Legenda dei colori", style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 14 } },
+    h("span", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", marginRight: 2 } }, "Colori:"),
+    vars.map((v, i) => h("span", { key: i, style: { border: `1.5px solid ${v.colore}`, color: v.colore, borderRadius: 999, padding: "3px 10px", fontWeight: 700, fontSize: "calc(0.82em * var(--fs))", background: "#fff" } }, v.simbolo ? `${v.simbolo}` : "", v.simbolo && v.nome ? " = " : "", v.nome))
+  );
+}
 function MiniSpeak({ text }) {
   const { speak, stop, speaking, supported } = useSpeech();
   if (!supported) return null;
   return React.createElement("button", {
     onClick: (e) => {
       e.stopPropagation();
-      speaking ? stop() : speak(text);
+      speaking ? stop() : speak(plainMath(text));
     },
     "aria-label": speaking ? "Ferma la lettura" : "Ascolta",
     title: speaking ? "Ferma" : "Ascolta",
@@ -26910,7 +27030,7 @@ function MateDiagram({ svg }) {
   if (!svg) return null;
   return React.createElement("div", { className: "mate-diagram", style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, margin: "12px 0", color: C.ink, textAlign: "center" }, dangerouslySetInnerHTML: { __html: svg } });
 }
-function MatematicaScreen({ onSave, initialState, onStateChange }) {
+function MatematicaScreen({ onSave, initialState, onStateChange, archivio = [] }) {
   const h = React.createElement;
   const init = initialState || {};
   const [topic, setTopic] = useState(init.topic || "");
@@ -26926,11 +27046,38 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
   const [savedId, setSavedId] = useState(init.savedId || null);
   const [savedFlash, setSavedFlash] = useState(false);
   const [easyRead, setEasyRead] = usePref(EASY_READ_KEY, false);
+  const [mappa, setMappa] = useState(init.mappa || null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [dictMode, setDictMode] = useState(false);
+  const [wordLookup, setWordLookup] = useState(null);
+  const lookupSeqRef = useRef(0);
+  const lessonRef = useRef(null);
+  const varIndex = React.useMemo(() => buildMateVarIndex(lesson && lesson.variabili), [lesson]);
+  const openWord = async (word, context) => {
+    const seq = ++lookupSeqRef.current;
+    setWordLookup({ word, status: "loading" });
+    try {
+      const entry = await lookupItalianWord(word, context);
+      if (seq === lookupSeqRef.current) setWordLookup({ word, status: "done", entry });
+    } catch (e) {
+      if (seq === lookupSeqRef.current) setWordLookup({ word, status: "error", error: e.message || "Non sono riuscito a trovare il significato. Riprova." });
+    }
+  };
+  const handleDictClick = (e) => {
+    if (!dictMode) return;
+    if (e.target.closest && e.target.closest("button:not([data-mate-opt]), textarea, input, a, iframe, [data-mate-nodict]")) return;
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const hit = wordAtPoint(e.clientX, e.clientY, lessonRef.current);
+    if (hit) openWord(hit.word, hit.context);
+  };
   const unitRefs = useRef({});
   const scrollToRef = useRef(null);
   useEffect(() => {
-    if (onStateChange) onStateChange({ topic, livello, status: status === "loading" ? "input" : status, error, lesson, source, answers, current, exercises, videoState, savedId });
-  }, [topic, livello, status, error, lesson, source, answers, current, exercises, videoState, savedId]);
+    if (onStateChange) onStateChange({ topic, livello, status: status === "loading" ? "input" : status, error, lesson, source, answers, current, exercises, videoState, savedId, mappa });
+  }, [topic, livello, status, error, lesson, source, answers, current, exercises, videoState, savedId, mappa]);
   useEffect(() => {
     const k = scrollToRef.current;
     if (k === null || k === void 0) return;
@@ -26952,6 +27099,7 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
       setCurrent(0);
       setVideoState(null);
       setSavedId(null);
+      setMappa(null);
       setStatus("lesson");
     } catch (e) {
       setError(e && e.message || "Non sono riuscito a preparare la lezione. Riprova.");
@@ -26966,12 +27114,16 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
     setCurrent(0);
     setVideoState(null);
     setSavedId(null);
+    setMappa(null);
+    setDictMode(false);
+    setWordLookup(null);
     setError("");
   };
   const save = () => {
     if (!lesson) return;
     const content = JSON.stringify({ v: 1, topic, livello, lesson, answers, current, exercises: Object.fromEntries(Object.entries(exercises).map(([k, v]) => [k, { answer: v.answer || "", esito: v.esito || null, spiegazione: v.spiegazione || "", showSol: !!v.showSol, status: v.status === "checking" ? "idle" : v.status || "idle" }])) });
-    const id = onSave({ type: "matematica", title: `Matematica — ${lesson.titolo}`, content, materia: "matematica" }, savedId);
+    const mapData = mappa && mappa.data && Array.isArray(mappa.data.branches) && mappa.data.branches.length ? mappa.data : null;
+    const id = onSave({ type: "matematica", title: `Matematica — ${lesson.titolo}`, content, materia: "matematica", mapData }, savedId);
     if (id) setSavedId(id);
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1800);
@@ -27036,7 +27188,7 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
     if (!ans) return;
     setEx(i, { status: "checking", error: "" });
     try {
-      const r = await checkMathExercise(lesson.esercizi[i], ans);
+      const r = await checkMathExercise(lesson.esercizi[i], ans, lesson.variabili);
       setEx(i, { status: "done", esito: r.esito, spiegazione: r.spiegazione, tries: (st.tries || 0) + 1 });
     } catch (e) {
       setEx(i, { status: "idle", error: e && e.message || "Non sono riuscito a correggere. Riprova." });
@@ -27056,21 +27208,21 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
         { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 } },
         h("span", { style: { background: MATE_COLOR, color: "#FBFAF4", borderRadius: 999, padding: "3px 11px", fontWeight: 700, fontSize: "calc(0.8em * var(--fs))" } }, `Unit\xE0 ${i + 1} di ${total}`),
         h("h3", { style: { margin: 0, color: C.ink, fontSize: "calc(1.08em * var(--fs))", flex: "1 1 200px" } }, u.titolo),
-        h(SpeakButton, { text: speech, color: MATE_COLOR })
+        h(SpeakButton, { text: plainMath(speech), color: MATE_COLOR })
       ),
-      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.65 } }, h(FormattedText, { text: u.spiegazione, interactive: false })),
+      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.65 } }, h(MathText, { text: u.spiegazione })),
       h(MateDiagram, { svg: u.diagramma }),
       u.esempio && h(
         "div",
         { className: easyRead ? "chiaro-easy" : void 0, style: { background: "rgba(160,103,45,0.07)", borderLeft: `4px solid ${MATE_COLOR}`, borderRadius: 10, padding: "12px 14px", margin: "12px 0", color: C.ink, lineHeight: 1.6 } },
         h("div", { style: { fontWeight: 700, marginBottom: 6, color: MATE_COLOR } }, "Esempio svolto"),
-        h(FormattedText, { text: u.esempio, interactive: false })
+        h(MathText, { text: u.esempio })
       ),
       v && h(
         "div",
         { style: { borderTop: `1px dashed ${C.border}`, marginTop: 14, paddingTop: 14 } },
         h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 4 } }, "❓ Verifica"),
-        h("div", { style: { color: C.ink, marginBottom: 10, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "flex-start" } }, h("span", { style: { flex: 1 } }, v.domanda), h(MiniSpeak, { text: v.domanda + "\n" + v.opzioni.map((o, k) => `${String.fromCharCode(65 + k)}: ${o.testo}`).join("\n") })),
+        h("div", { style: { color: C.ink, marginBottom: 10, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "flex-start" } }, h("span", { style: { flex: 1 } }, h(MathText, { text: v.domanda, block: false })), h(MiniSpeak, { text: v.domanda + "\n" + v.opzioni.map((o, k) => `${String.fromCharCode(65 + k)}: ${o.testo}`).join("\n") })),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, v.opzioni.map((o, oi) => {
           const isChosen = a.chosen === oi;
           const wasWrong = (a.wrong || []).includes(oi);
@@ -27091,13 +27243,13 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
             onClick: () => !locked && !wasWrong && choose(i, oi),
             disabled: locked || wasWrong,
             style: { textAlign: "left", padding: "11px 14px", borderRadius: 12, border: `1.5px solid ${border}`, background: bg, color: col, fontFamily: FONT, fontSize: "calc(0.95em * var(--fs))", cursor: locked || wasWrong ? "default" : "pointer", lineHeight: 1.45, textDecoration: wasWrong && !isChosen ? "line-through" : "none" }
-          }, h("b", null, String.fromCharCode(65 + oi), ". "), o.testo, showRight ? " ✓" : "");
+          }, h("b", null, String.fromCharCode(65 + oi), ". "), h(MathText, { text: o.testo, block: false }), showRight ? " ✓" : "");
         })),
         chosen && h(
           "div",
           { role: "status", style: { marginTop: 12, borderRadius: 12, padding: "12px 14px", background: chosen.corretta ? "rgba(107,143,94,0.12)" : "rgba(224,114,79,0.1)", border: `1px solid ${chosen.corretta ? "rgba(107,143,94,0.45)" : "rgba(224,114,79,0.4)"}`, color: C.ink, lineHeight: 1.55 } },
           h("div", { style: { fontWeight: 700, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 } }, h("span", { style: { flex: 1 } }, chosen.corretta ? a.revealed && !a.correct ? "Ecco la risposta giusta" : "Giusto! \u{1F44F}" : "Non \xE8 questa. Vediamo dov'\xE8 l'errore:"), h(MiniSpeak, { text: chosen.spiegazione })),
-          h(FormattedText, { text: chosen.spiegazione || (chosen.corretta ? "Risposta corretta." : "Questa risposta non \xE8 corretta."), interactive: false }),
+          h(MathText, { text: chosen.spiegazione || (chosen.corretta ? "Risposta corretta." : "Questa risposta non \xE8 corretta.") }),
           !chosen.corretta && h(
             "div",
             { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 } },
@@ -27124,7 +27276,7 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
         h("span", { style: { fontWeight: 700, color: MATE_COLOR, flex: 1 } }, `Esercizio ${i + 1}`, i === 0 ? " \xB7 facile" : i === lesson.esercizi.length - 1 ? " \xB7 pi\xF9 impegnativo" : ""),
         h(MiniSpeak, { text: ex.testo })
       ),
-      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.6, marginBottom: 12 } }, h(FormattedText, { text: ex.testo, interactive: false })),
+      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.6, marginBottom: 12 } }, h(MathText, { text: ex.testo })),
       h(
         "div",
         { style: { position: "relative", marginBottom: 8 } },
@@ -27149,32 +27301,54 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
         "div",
         { role: "status", style: { marginTop: 12, borderRadius: 12, padding: "12px 14px", background: tone[0], border: `1px solid ${tone[1]}`, color: C.ink, lineHeight: 1.55 } },
         h("div", { style: { fontWeight: 700, marginBottom: 6, display: "flex", gap: 8, alignItems: "center" } }, h("span", { style: { flex: 1 } }, tone[2]), h(MiniSpeak, { text: res.spiegazione })),
-        h(FormattedText, { text: res.spiegazione, interactive: false })
+        h(MathText, { text: res.spiegazione })
       ),
       st.showSol && h(
         "div",
         { style: { marginTop: 12, background: "rgba(160,103,45,0.07)", borderLeft: `4px solid ${MATE_COLOR}`, borderRadius: 10, padding: "12px 14px", color: C.ink, lineHeight: 1.6 } },
-        h("div", { style: { fontWeight: 700, marginBottom: 6 } }, "Soluzione: ", ex.risultato),
-        h(FormattedText, { text: ex.svolgimento, interactive: false })
+        h("div", { style: { fontWeight: 700, marginBottom: 6 } }, "Soluzione: ", h(MathText, { text: ex.risultato, block: false })),
+        h(MathText, { text: ex.svolgimento })
       )
     );
   };
-  return h(
+  const mapsList = savedMapsFromArchivio(archivio, `${topic} ${lesson.titolo}`);
+  const dictBtn = h("button", {
+    onClick: () => {
+      setDictMode((v) => !v);
+      setWordLookup(null);
+    },
+    "aria-pressed": dictMode,
+    title: "Tocca una parola per sapere cosa significa",
+    style: { ...secondaryBtnStyle, background: dictMode ? C.wine : C.card, color: dictMode ? "#FFF" : C.wine, borderColor: C.wine }
+  }, h(Book, { size: 16 }), dictMode ? " Chiudi dizionario" : " Dizionario");
+  const mainColumn = h(
     "div",
-    { style: { maxWidth: 760 } },
-    h("style", null, EASY_READ_CSS + ".mate-diagram svg{max-width:100%;height:auto;max-height:320px}"),
+    { className: mappa ? "interr-chat" : void 0, style: { maxWidth: mappa ? void 0 : 760 } },
+    h("style", null, EASY_READ_CSS + ".mate-diagram svg{max-width:100%;height:auto;max-height:320px}.mate-dict-on,.mate-dict-on *{cursor:help!important}"),
     h(PageHeader, { title: lesson.titolo, subtitle: "Matematica e geometria \xB7 " + (livello === "superiori" ? "scuola superiore" : "scuola media") }),
     h(
       "div",
       { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 } },
-      h("button", { onClick: reset, style: secondaryBtnStyle }, "← Nuovo argomento"),
+      h("button", { onClick: reset, style: secondaryBtnStyle }, "\u2190 Nuovo argomento"),
       h("button", {
         onClick: () => setEasyRead(!easyRead),
         "aria-pressed": !!easyRead,
         style: { ...secondaryBtnStyle, background: easyRead ? C.ink : C.card, color: easyRead ? "#FBFAF4" : C.ink, borderColor: easyRead ? C.ink : C.border }
-      }, "☰ Lettura facilitata"),
-      h("button", { onClick: save, style: { ...secondaryBtnStyle, background: savedFlash ? MATE_COLOR : C.card, color: savedFlash ? "#FBFAF4" : C.ink, borderColor: savedFlash ? MATE_COLOR : C.border } }, savedFlash ? "✓ Salvato" : savedId ? "\u{1F4BE} Salva i progressi" : "\u{1F4BE} Salva nell'archivio")
+      }, "\u2630 Lettura facilitata"),
+      dictBtn,
+      h("button", { onClick: () => mappa ? setMappa(null) : setMappa({ id: "nuova-" + Date.now(), title: lesson.titolo, data: { topic: lesson.titolo, branches: [], edges: [] } }), style: secondaryBtnStyle }, h(Network, { size: 15 }), mappa ? " Chiudi mappa" : " Crea una mappa"),
+      h("button", { onClick: () => setPickerOpen((v) => !v), style: secondaryBtnStyle }, h(Network, { size: 15 }), " Apri una mappa salvata"),
+      h("button", { onClick: save, style: { ...secondaryBtnStyle, background: savedFlash ? MATE_COLOR : C.card, color: savedFlash ? "#FBFAF4" : C.ink, borderColor: savedFlash ? MATE_COLOR : C.border } }, savedFlash ? "\u2713 Salvato" : savedId ? "\u{1F4BE} Salva i progressi" : "\u{1F4BE} Salva nell'archivio")
     ),
+    pickerOpen && h(MapPicker, { maps: mapsList, onPick: (m) => {
+      setMappa({ id: m.id, title: m.title, data: m.data });
+      setPickerOpen(false);
+    }, onClose: () => setPickerOpen(false) }),
+    dictMode && h("p", { style: { ...small, color: C.wine, margin: "-4px 0 12px", fontWeight: 700 } }, "Dizionario acceso: tocca una parola del testo per sapere cosa significa."),
+    h(MateLegend, { vars: lesson.variabili }),
+    h(
+      "div",
+      { ref: lessonRef, onClickCapture: handleDictClick, className: dictMode ? "mate-dict-on" : void 0 },
     h(
       "div",
       { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }, "aria-label": "Avanzamento" },
@@ -27196,7 +27370,7 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
       h("span", { style: { ...small, alignSelf: "center", marginLeft: 4 } }, allUnitsDone ? "Unit\xE0 completate!" : `Unit\xE0 ${Math.min(current + 1, total)} di ${total}`)
     ),
     source !== "new" && h("p", { style: { ...small, margin: "-6px 0 14px" } }, "Lezione gi\xE0 pronta su questo argomento. ", h("button", { onClick: () => start(true), style: { background: "none", border: "none", padding: 0, color: MATE_COLOR, textDecoration: "underline", cursor: "pointer", fontFamily: FONT, fontSize: "inherit" } }, "Preparane una nuova versione")),
-    lesson.introduzione && h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { ...card, background: "rgba(160,103,45,0.06)", color: C.ink, lineHeight: 1.6 } }, h("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, h("div", { style: { flex: 1 } }, h(FormattedText, { text: lesson.introduzione, interactive: false })), h(MiniSpeak, { text: lesson.introduzione }))),
+    lesson.introduzione && h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { ...card, background: "rgba(160,103,45,0.06)", color: C.ink, lineHeight: 1.6 } }, h("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, h("div", { style: { flex: 1 } }, h(MathText, { text: lesson.introduzione })), h(MiniSpeak, { text: lesson.introduzione }))),
     units.slice(0, Math.min(current + 1, total)).map(renderUnit),
     allUnitsDone && h(
       "div",
@@ -27207,7 +27381,25 @@ function MatematicaScreen({ onSave, initialState, onStateChange }) {
       h("h2", { style: { fontFamily: SERIF, fontWeight: 500, color: C.ink, fontSize: "calc(1.45em * var(--fs))", margin: "22px 0 12px" } }, "Un video per ripassare"),
       h(TopicVideoBox, { topic: topic.trim().length <= 60 && topic.trim() ? topic.trim() : lesson.titolo, color: MATE_COLOR, state: videoState, onState: setVideoState })
     )
+    ),
+    wordLookup && h(WordDefinitionSheet, { lookup: wordLookup, color: C.wine, onClose: () => {
+      lookupSeqRef.current++;
+      setWordLookup(null);
+    } })
   );
+  const body = !mappa ? mainColumn : h(
+    React.Fragment,
+    null,
+    h("style", null, INTERR_SPLIT_CSS),
+    h("div", { className: "interr-split" }, mainColumn, h("div", { className: "interr-map" }, h(MappaWebScreen, {
+      key: mappa.id,
+      embedded: true,
+      initialData: mappa.data,
+      onDataChange: (data) => setMappa((m) => m ? { ...m, data } : m),
+      onSave: (data) => onSave({ type: "mappa", title: data.topic || "Mappa", content: JSON.stringify(data), materia: "matematica" })
+    })))
+  );
+  return h(MateVarsContext.Provider, { value: varIndex }, body);
 }
 const RIASSUNTO_SYSTEM = "Sei un assistente che scrive riassunti chiari per studenti con DSA, a partire da un argomento, un testo o una foto. Scrivi in prosa scorrevole, frasi brevi e dirette, evidenzia con **doppio asterisco** i 4-6 termini chiave pi\xF9 importanti. Usa '## ' per dividere in 2-4 sezioni tematiche se il contenuto lo giustifica. Rispondi solo con il riassunto.";
 const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 semplice per studenti con DSA, a partire da un argomento, un testo o una foto. Frasi corte, una idea per frase, parole comuni al posto di termini difficili quando possibile (spiega quelli tecnici indispensabili). Usa '## ' per dividere in sezioni brevi. Rispondi solo con il testo semplificato.";
@@ -27340,7 +27532,8 @@ function App() {
       current: data.current || 0,
       exercises: data.exercises || {},
       videoState: null,
-      savedId: item.id
+      savedId: item.id,
+      mappa: item.mapData && Array.isArray(item.mapData.branches) && item.mapData.branches.length ? { id: "salvata-" + item.id, title: item.mapData.topic || "Mappa", data: item.mapData } : null
     });
     setLessonNonce(Date.now());
     setActive("matematica");
@@ -27577,6 +27770,7 @@ function App() {
     content = /* @__PURE__ */ React.createElement(MatematicaScreen, {
       key: "matematica-" + lessonNonce,
       onSave: saveOrUpdateArchivio,
+      archivio,
       initialState: getSectionState("matematica"),
       onStateChange: (s) => setSectionState("matematica", s)
     });
