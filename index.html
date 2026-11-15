@@ -90,6 +90,16 @@
   html, body { margin: 0; padding: 0; background: #F7EFE3; }
   #root { min-height: 100vh; }
 </style>
+<script>
+/* Uso senza internet: il browser conserva una copia dell'app (sw.js).
+   Dentro l'app Android la copia la gestisce l'app stessa. */
+(function () {
+  if (window.ChiaroAndroid || !("serviceWorker" in navigator) || location.protocol !== "https:") return;
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  });
+})();
+</script>
 <script
   async
   crossorigin="anonymous"
@@ -21662,6 +21672,7 @@ const ChevronLeft = makeIcon("\u2039");
 const Menu = makeIcon("\u2630");
 const Shuffle = makeIcon("\u{1F500}");
 const Lock = makeIcon("\u{1F512}");
+const Ruler = makeIcon("\u{1F4D0}");
 const C = {
   paper: "#F7EFE3",
   paperLine: "#EDE1CC",
@@ -21732,6 +21743,13 @@ const SECTIONS = [
     subtitle: "Costruiscila scrivendo o parlando.",
     Icon: Network,
     color: C.blue
+  },
+  {
+    id: "matematica",
+    title: "Matematica e geometria",
+    subtitle: "Un argomento spiegato a piccoli passi, con verifiche ed esercizi.",
+    Icon: Ruler,
+    color: "#A0672D"
   },
   {
     id: "dizionario",
@@ -21825,6 +21843,76 @@ function waitForClerk() {
     check();
   });
 }
+const OFFLINE_MESSAGE = "Sei offline: per questa funzione serve internet. Intanto puoi usare l'archivio, le mappe, le flashcard salvate e la lettura ad alta voce.";
+const OFFLINE_USER_KEY = "chiarostudio-utente-offline";
+function isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+async function chiaroApiFetch(url, opts) {
+  if (isOffline()) throw new Error(OFFLINE_MESSAGE);
+  try {
+    return await fetch(url, opts);
+  } catch (e) {
+    if (isOffline()) throw new Error(OFFLINE_MESSAGE);
+    if (e && e.name === "TypeError") throw new Error("Non riesco a collegarmi. Controlla la connessione a internet e riprova.");
+    throw e;
+  }
+}
+function rememberOfflineUser(user) {
+  try {
+    if (!user) {
+      window.localStorage.removeItem(OFFLINE_USER_KEY);
+      return;
+    }
+    window.localStorage.setItem(OFFLINE_USER_KEY, JSON.stringify({ id: user.id, admin: isUserAdmin(user), abbonato: isUserSubscribed(user), ts: Date.now() }));
+  } catch {
+  }
+}
+function readOfflineUser() {
+  try {
+    const u = JSON.parse(window.localStorage.getItem(OFFLINE_USER_KEY) || "null");
+    return u && u.id ? u : null;
+  } catch {
+    return null;
+  }
+}
+function useOnlineStatus() {
+  const [online, setOnline] = useState(() => !isOffline());
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+  return online;
+}
+function reconnectApp() {
+  try {
+    if (window.ChiaroAndroid && window.ChiaroAndroid.goOnline) {
+      window.ChiaroAndroid.goOnline();
+      return;
+    }
+  } catch {
+  }
+  window.location.reload();
+}
+function OfflineBanner({ online, offlineMode }) {
+  if (online && !offlineMode) return null;
+  const back = online && offlineMode;
+  return React.createElement(
+    "div",
+    {
+      role: "status",
+      style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", margin: "0 0 18px", padding: "12px 14px", borderRadius: 14, background: back ? "rgba(79,123,121,0.12)" : "rgba(224,114,79,0.12)", border: `1px solid ${back ? "rgba(79,123,121,0.35)" : "rgba(224,114,79,0.35)"}`, color: C.ink, fontFamily: FONT, fontSize: "calc(0.88em * var(--fs))", lineHeight: 1.45 }
+    },
+    React.createElement("span", { style: { flex: 1, minWidth: 200 } }, back ? "Sei di nuovo online. Ricollegati per usare di nuovo tutte le funzioni." : "Sei offline. Puoi usare l'archivio, le mappe, le flashcard salvate e la lettura ad alta voce. Per creare contenuti nuovi serve internet."),
+    back && React.createElement("button", { onClick: reconnectApp, style: { padding: "8px 14px", borderRadius: 10, border: "none", background: C.ink, color: "#FBFAF4", fontWeight: 700, fontFamily: FONT, cursor: "pointer", fontSize: "calc(0.88em * var(--fs))" } }, "Ricollegati")
+  );
+}
 async function getClerkToken() {
   try {
     if (window.Clerk && window.Clerk.session) {
@@ -21866,7 +21954,7 @@ async function callClaude({ system, userText, image, maxTokens = 1500, modelTier
     body.image = { base64: image.base64, mediaType: image.mediaType };
   }
   const token = await getClerkToken();
-  const res = await fetch(API_ENDPOINT, {
+  const res = await chiaroApiFetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify(body)
@@ -21888,7 +21976,7 @@ async function callClaudeChat({ system, messages, maxTokens = 700, modelTier = "
   if (isBlockedText(system) || (messages || []).some((m) => m && m.role === "user" && isBlockedText(m.text))) throw new Error(BLOCKED_MESSAGE);
   system = SAFETY_SYSTEM + (system || "");
   const token = await getClerkToken();
-  const res = await fetch(API_ENDPOINT, {
+  const res = await chiaroApiFetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify({ system, messages, maxTokens, modelTier, chat: true })
@@ -21984,7 +22072,7 @@ async function sharedCacheGet(key) {
   if (isBlockedText(key)) return null;
   try {
     const token = await getClerkToken();
-    const res = await fetch(API_ENDPOINT, {
+    const res = await chiaroApiFetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_get", key })
@@ -21999,7 +22087,7 @@ async function sharedCacheGet(key) {
 async function sharedCacheSet(key, value) {
   try {
     const token = await getClerkToken();
-    await fetch(API_ENDPOINT, {
+    await chiaroApiFetch(API_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
       body: JSON.stringify({ type: "cache_set", key, value })
@@ -23080,7 +23168,8 @@ const HOME_ROWS = [
   ["riassunto", "facile"],
   ["formulario", "flashcard"],
   ["mappe", "quiz"],
-  ["interrogazione", "dizionario"]
+  ["interrogazione", "dizionario"],
+  ["matematica"]
 ];
 function HomeCard({ section, wide, badgeColor, badgeBg, onSelect }) {
   return /* @__PURE__ */ React.createElement(
@@ -23355,7 +23444,7 @@ const REPORTS_SHARED_KEY = "segnalazioni";
 const REPORT_KIND_LABELS = { riassunto: "Riassunto", facile: "Testo facile", formulario: "Formulario", dizionario: "Dizionario", video: "Video YouTube" };
 async function reportsRequest(body) {
   const token = await getClerkToken();
-  const res = await fetch(API_ENDPOINT, {
+  const res = await chiaroApiFetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify(body)
@@ -23969,7 +24058,7 @@ async function findTopicVideo(topic) {
     }
   }
   const token = await getClerkToken();
-  const res = await fetch(API_ENDPOINT, {
+  const res = await chiaroApiFetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
     body: JSON.stringify({ type: "video_search", topic })
@@ -24579,10 +24668,14 @@ function parseSavedDeck(content) {
   }
   return null;
 }
-function ArchivioWebScreen({ items, onDelete, onOpenFlashcards, onOpenText }) {
+function ArchivioWebScreen({ items, onDelete, onOpenFlashcards, onOpenText, onOpenLesson }) {
   const [filtro, setFiltro] = useState("tutti");
   const [viewing, setViewing] = useState(null);
   const openItem = (item) => {
+    if (item.type === "matematica" && onOpenLesson) {
+      onOpenLesson(item);
+      return;
+    }
     if (item.type === "riassunto" && onOpenText) {
       onOpenText(item);
       return;
@@ -25396,13 +25489,20 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   }, [topic, branches, edges]);
   const canvasRef = useRef(null);
   const viewportRef = useRef(null);
-  const dragInfoRef = useRef({ x: 0, y: 0, moved: false });
+  const dragInfoRef = useRef({ x: 0, y: 0, moved: false, id: null });
   const lastTapRef = useRef({ time: 0, x: 0, y: 0 });
   const pinchRef = useRef(null);
   const pinchingRef = useRef(false);
   const zoomRef = useRef(1);
-  const pendingScrollRef = useRef(null);
-  zoomRef.current = zoom;
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef({ x: 0, y: 0 });
+  const boxRef = useRef(box);
+  boxRef.current = box;
+  const ptrsRef = useRef(new Map());
+  const panDragRef = useRef(null);
+  const [resizingId, setResizingId] = useState(null);
+  const resizeRef = useRef(null);
+  const longPressRef = useRef(null);
   const DROP_THRESHOLD = 13;
 
   // dimensione di base del riquadro: tutta la larghezza disponibile
@@ -25428,81 +25528,176 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     };
   }, [started]);
 
+  // vista: la mappa si sposta (pan) e si ingrandisce (zoom) con una trasformazione
+  const clampPan = (p, z) => {
+    const bw = boxRef.current.w || 600;
+    const bh = boxRef.current.h || 480;
+    const mx = bw * 0.5;
+    const my = bh * 0.5;
+    return {
+      x: clamp(p.x, Math.min(bw - bw * z - mx, mx), mx),
+      y: clamp(p.y, Math.min(bh - bh * z - my, my), my)
+    };
+  };
+  const applyView = (z, p) => {
+    const cp = clampPan(p, z);
+    zoomRef.current = z;
+    panRef.current = cp;
+    setZoom(z);
+    setPan(cp);
+  };
   // zoom mantenendo fermo il punto sotto le dita (o sotto il puntatore)
   const zoomAround = (nextZoom, clientX, clientY) => {
     const vp = viewportRef.current;
     const z = clamp(Math.round(nextZoom * 100) / 100, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
     if (!vp) {
-      setZoom(z);
+      applyView(z, panRef.current);
       return;
     }
     const r = vp.getBoundingClientRect();
     const px = clientX === void 0 ? r.width / 2 : clientX - r.left;
     const py = clientY === void 0 ? r.height / 2 : clientY - r.top;
     const cur = zoomRef.current;
-    pendingScrollRef.current = {
-      left: (vp.scrollLeft + px) / cur * z - px,
-      top: (vp.scrollTop + py) / cur * z - py
-    };
-    setZoom(z);
+    const p = panRef.current;
+    const wx = (px - p.x) / cur;
+    const wy = (py - p.y) / cur;
+    applyView(z, { x: px - wx * z, y: py - wy * z });
   };
-  React.useLayoutEffect(() => {
-    const p = pendingScrollRef.current;
-    const vp = viewportRef.current;
-    if (p && vp) {
-      vp.scrollLeft = Math.max(0, p.left);
-      vp.scrollTop = Math.max(0, p.top);
-    }
-    pendingScrollRef.current = null;
-  }, [zoom]);
+  const resetView = () => applyView(1, { x: 0, y: 0 });
 
-  // pizzico con due dita (telefono e tablet) e ctrl + rotellina / pizzico sul trackpad
+  // ctrl + rotellina / pizzico sul trackpad del computer
   useEffect(() => {
     if (!started) return;
     const vp = viewportRef.current;
     if (!vp) return;
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
-    const onStart = (e) => {
-      if (e.touches.length === 2) {
-        pinchingRef.current = true;
-        pinchRef.current = { d: dist(e.touches), z: zoomRef.current };
-        setDraggingId(null);
-        setHoverTargetId(null);
-        e.preventDefault();
-      }
-    };
-    const onMove = (e) => {
-      if (e.touches.length === 2 && pinchRef.current) {
-        e.preventDefault();
-        const m = mid(e.touches);
-        zoomAround(pinchRef.current.z * dist(e.touches) / pinchRef.current.d, m.x, m.y);
-      }
-    };
-    const onEnd = (e) => {
-      if (e.touches.length < 2) pinchRef.current = null;
-      if (e.touches.length === 0) setTimeout(() => {
-        pinchingRef.current = false;
-      }, 60);
-    };
     const onWheel = (e) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
       zoomAround(zoomRef.current * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
     };
-    vp.addEventListener("touchstart", onStart, { passive: false });
-    vp.addEventListener("touchmove", onMove, { passive: false });
-    vp.addEventListener("touchend", onEnd);
-    vp.addEventListener("touchcancel", onEnd);
     vp.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      vp.removeEventListener("touchstart", onStart);
-      vp.removeEventListener("touchmove", onMove);
-      vp.removeEventListener("touchend", onEnd);
-      vp.removeEventListener("touchcancel", onEnd);
-      vp.removeEventListener("wheel", onWheel);
-    };
+    return () => vp.removeEventListener("wheel", onWheel);
   }, [started]);
+
+  // un dito sullo sfondo = sposta la mappa; due dita = zoom (e spostamento)
+  const twoPointers = () => [...ptrsRef.current.values()].slice(0, 2);
+  const startPinch = () => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const [a, b2] = twoPointers();
+    const r = vp.getBoundingClientRect();
+    const mx = (a.x + b2.x) / 2 - r.left;
+    const my = (a.y + b2.y) / 2 - r.top;
+    const z = zoomRef.current;
+    const p = panRef.current;
+    pinchingRef.current = true;
+    pinchRef.current = { d: Math.max(10, Math.hypot(a.x - b2.x, a.y - b2.y)), z, wx: (mx - p.x) / z, wy: (my - p.y) / z };
+    panDragRef.current = null;
+    clearTimeout(longPressRef.current);
+    resizeRef.current = null;
+    setResizingId(null);
+    setDraggingId(null);
+    setHoverTargetId(null);
+  };
+  const finishEditing = () => {
+    if (editingId !== null) {
+      const nb = branches.find((b) => b.id === editingId);
+      if (nb && !String(nb.text || "").trim()) removeBranch(editingId);
+    }
+    setEditingId(null);
+    setEditingCenter(false);
+    try {
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    } catch {
+    }
+  };
+  const handleBackgroundTap = (clientX, clientY) => {
+    if (collegaMode) {
+      setConnectFrom(null);
+      return;
+    }
+    if (editingId !== null || editingCenter) {
+      finishEditing();
+      lastTapRef.current = { time: 0, x: 0, y: 0 };
+      return;
+    }
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = clamp((clientX - rect.left) / rect.width * 100, 8, 92);
+    const y = clamp((clientY - rect.top) / rect.height * 100, 8, 92);
+    const now = Date.now();
+    const last = lastTapRef.current;
+    const isDoubleTap = now - last.time < 400 && Math.abs(x - last.x) < 8 && Math.abs(y - last.y) < 8;
+    if (isDoubleTap) {
+      lastTapRef.current = { time: 0, x: 0, y: 0 };
+      const idx = branches.length;
+      const nb = {
+        id: Date.now() + Math.random(),
+        text: "",
+        x,
+        y,
+        color: MAP_COLORS[idx % MAP_COLORS.length],
+        scale: defaultScale,
+        radius: 12
+      };
+      const parentId = nearestNodeId(nb.id, x, y, Infinity) || "center";
+      setBranches((prev) => [...prev, nb]);
+      setEdges((prev) => [...prev, { id: `e-${nb.id}`, a: parentId, b: nb.id }]);
+      setEditingCenter(false);
+      setEditingId(nb.id);
+    } else {
+      lastTapRef.current = { time: now, x, y };
+    }
+  };
+  const vpPointerDownCapture = (e) => {
+    if (e.isPrimary) ptrsRef.current.clear();
+    ptrsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrsRef.current.size === 2) startPinch();
+  };
+  const vpPointerDown = (e) => {
+    if (ptrsRef.current.size !== 1 || pinchingRef.current) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.target.closest && e.target.closest("[data-map-node]")) return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+    }
+    panDragRef.current = { id: e.pointerId, sx: e.clientX, sy: e.clientY, p0: panRef.current, moved: false };
+  };
+  const vpPointerMove = (e) => {
+    if (ptrsRef.current.has(e.pointerId)) ptrsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pr = pinchRef.current;
+    if (pr && ptrsRef.current.size >= 2) {
+      const vp = viewportRef.current;
+      if (!vp) return;
+      const [a, b2] = twoPointers();
+      const r = vp.getBoundingClientRect();
+      const mx = (a.x + b2.x) / 2 - r.left;
+      const my = (a.y + b2.y) / 2 - r.top;
+      const z = clamp(Math.round(pr.z * Math.hypot(a.x - b2.x, a.y - b2.y) / pr.d * 100) / 100, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
+      applyView(z, { x: mx - pr.wx * z, y: my - pr.wy * z });
+      return;
+    }
+    const pd = panDragRef.current;
+    if (pd && pd.id === e.pointerId) {
+      const dx = e.clientX - pd.sx;
+      const dy = e.clientY - pd.sy;
+      if (!pd.moved && Math.hypot(dx, dy) > 6) pd.moved = true;
+      if (pd.moved) applyView(zoomRef.current, { x: pd.p0.x + dx, y: pd.p0.y + dy });
+    }
+  };
+  const vpPointerEnd = (e) => {
+    ptrsRef.current.delete(e.pointerId);
+    if (pinchRef.current && ptrsRef.current.size < 2) pinchRef.current = null;
+    if (ptrsRef.current.size === 0 && pinchingRef.current) setTimeout(() => {
+      pinchingRef.current = false;
+    }, 60);
+    const pd = panDragRef.current;
+    if (pd && pd.id === e.pointerId) {
+      panDragRef.current = null;
+      if (!pd.moved && e.type === "pointerup" && !pinchingRef.current) handleBackgroundTap(e.clientX, e.clientY);
+    }
+  };
 
   const nearestNodeId = (excludeId, x, y, threshold = DROP_THRESHOLD) => {
     let bestId = null;
@@ -25541,35 +25736,6 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const addBranch = () => {
     addBranchFromText(draft);
     setDraft("");
-  };
-  const handleCanvasClick = (e) => {
-    if (collegaMode || pinchingRef.current || e.target !== canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = clamp((e.clientX - rect.left) / rect.width * 100, 8, 92);
-    const y = clamp((e.clientY - rect.top) / rect.height * 100, 8, 92);
-    const now = Date.now();
-    const last = lastTapRef.current;
-    const isDoubleTap = now - last.time < 400 && Math.abs(x - last.x) < 8 && Math.abs(y - last.y) < 8;
-    if (isDoubleTap) {
-      lastTapRef.current = { time: 0, x: 0, y: 0 };
-      const idx = branches.length;
-      const nb = {
-        id: Date.now() + Math.random(),
-        text: "",
-        x,
-        y,
-        color: MAP_COLORS[idx % MAP_COLORS.length],
-        scale: defaultScale,
-        radius: 12
-      };
-      const parentId = nearestNodeId(nb.id, x, y, Infinity) || "center";
-      setBranches((prev) => [...prev, nb]);
-      setEdges((prev) => [...prev, { id: `e-${nb.id}`, a: parentId, b: nb.id }]);
-      setEditingCenter(false);
-      setEditingId(nb.id);
-    } else {
-      lastTapRef.current = { time: now, x, y };
-    }
   };
   const removeBranch = (id) => {
     setBranches((prev) => prev.filter((b) => b.id !== id));
@@ -25718,7 +25884,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     },
     h(Link2, { size: 14 }),
     " Collega"
-  ), h("div", { style: { display: "flex", gap: 4, alignItems: "center" } }, h("button", { onClick: () => zoomAround(zoom / 1.25), "aria-label": "Riduci la mappa", disabled: zoom <= MAP_ZOOM_MIN, style: zoomBtn }, "−"), h("button", { onClick: () => zoomAround(1), "aria-label": "Zoom normale", style: { ...zoomBtn, minWidth: 58 } }, `${Math.round(zoom * 100)}%`), h("button", { onClick: () => zoomAround(zoom * 1.25), "aria-label": "Ingrandisci la mappa", disabled: zoom >= MAP_ZOOM_MAX, style: zoomBtn }, "+")), h(
+  ), h("div", { style: { display: "flex", gap: 4, alignItems: "center" } }, h("button", { onClick: () => zoomAround(zoom / 1.25), "aria-label": "Riduci la mappa", disabled: zoom <= MAP_ZOOM_MIN, style: zoomBtn }, "−"), h("button", { onClick: resetView, "aria-label": "Zoom normale", style: { ...zoomBtn, minWidth: 58 } }, `${Math.round(zoom * 100)}%`), h("button", { onClick: () => zoomAround(zoom * 1.25), "aria-label": "Ingrandisci la mappa", disabled: zoom >= MAP_ZOOM_MAX, style: zoomBtn }, "+")), h(
     "button",
     {
       onClick: () => {
@@ -25728,7 +25894,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         setTopic("");
         setEditingId(null);
         setEditingCenter(false);
-        setZoom(1);
+        resetView();
       },
       style: {
         marginLeft: "auto",
@@ -25744,11 +25910,12 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     "Nuova"
   ));
 
-  const hint = collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Trascina per spostarlo, o rilascialo su un altro per collegarli. Tocca un palloncino (o il cerchio centrale) per modificarlo. Doppio tocco sullo sfondo per crearne uno nuovo. Con due dita allarghi o stringi la mappa." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo. Tocca il cerchio centrale per cambiarne il titolo.";
+  const hint = collegaMode ? "Tocca due palloncini per collegarli (o scollegarli)." : branches.length > 0 ? "Un dito: sposti la mappa o un palloncino. Due dita: zoom. Tocca un palloncino per scriverci, poi tocca uno spazio vuoto per confermare. Tieni premuto il bordo di un palloncino e trascina a destra o a sinistra per cambiarne la larghezza. Doppio tocco sullo sfondo: nuovo palloncino." : "Aggiungi il primo ramo qui sotto, o fai doppio tocco sullo sfondo. Tocca il cerchio centrale per cambiarne il titolo. Un dito sposta la mappa, due dita fanno lo zoom.";
 
   const center = h(
     "div",
     {
+      "data-map-node": "center",
       onClick: (e) => {
         e.stopPropagation();
         if (pinchingRef.current) return;
@@ -25807,29 +25974,133 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     const isSelectedForConnect = collegaMode && connectFrom === b.id;
     const isDropTarget = !collegaMode && hoverTargetId === b.id && draggingId !== b.id;
     const ez = isEditing ? Math.max(mz, 1) : mz;
+    const isResizing = resizingId === b.id;
+    // in modifica il palloncino resta sempre dentro il riquadro visibile
+    const vw = box.w || 600;
+    const editW = Math.min(Math.round((b.w ? Math.max(b.w, 110) : Math.max(250, 190 * b.scale)) * ez), vw - 40);
+    let editLeft = null;
+    if (isEditing) {
+      const cxView = b.x / 100 * W + pan.x;
+      const fixed = clamp(cxView, editW / 2 + 18, Math.max(editW / 2 + 18, vw - editW / 2 - 18));
+      editLeft = fixed - pan.x;
+    }
+    const handle = (edge) => h("div", {
+      key: edge,
+      "aria-label": edge < 0 ? "Stringi o allarga da sinistra" : "Stringi o allarga da destra",
+      onPointerDown: (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+        }
+        const wrap = e.currentTarget.closest("[data-map-node]");
+        const r = wrap.getBoundingClientRect();
+        resizeRef.current = { id: b.id, edge, sx: e.clientX, w0: r.width / ez, f: ez, handle: true };
+        setResizingId(b.id);
+      },
+      onPointerMove: (e) => {
+        const rr = resizeRef.current;
+        if (!rr || rr.id !== b.id || !rr.handle) return;
+        e.stopPropagation();
+        updateBranch(b.id, { w: Math.round(clamp(rr.w0 + rr.edge * (e.clientX - rr.sx) * 2 / rr.f, 110, 600)) });
+      },
+      onPointerUp: (e) => {
+        e.stopPropagation();
+        resizeRef.current = null;
+        setResizingId(null);
+      },
+      onPointerCancel: () => {
+        resizeRef.current = null;
+        setResizingId(null);
+      },
+      style: {
+        position: "absolute",
+        top: "50%",
+        [edge < 0 ? "left" : "right"]: -15,
+        transform: "translateY(-50%)",
+        width: 22,
+        height: 40,
+        borderRadius: 11,
+        background: "#FBFAF4",
+        border: `2px solid ${C.ink}`,
+        boxShadow: "0 2px 6px rgba(38,55,75,0.25)",
+        cursor: "ew-resize",
+        touchAction: "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: C.ink,
+        fontSize: 12,
+        fontWeight: 700,
+        zIndex: 3
+      }
+    }, "\u2194");
     return h(
       "div",
       {
         key: b.id,
+        "data-map-node": "branch",
         onPointerDown: (e) => {
           if (isEditing || pinchingRef.current) return;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          dragInfoRef.current = { x: e.clientX, y: e.clientY, moved: false };
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+          }
+          const gr = e.currentTarget.getBoundingClientRect();
+          dragInfoRef.current = { x: e.clientX, y: e.clientY, moved: false, id: b.id, ox: e.clientX - (gr.left + gr.width / 2), oy: e.clientY - (gr.top + gr.height / 2) };
           setDraggingId(b.id);
+          clearTimeout(longPressRef.current);
+          resizeRef.current = null;
+          if (collegaMode) return;
+          // tenendo premuto il bordo (destro o sinistro) si cambia la larghezza
+          const r = e.currentTarget.getBoundingClientRect();
+          const zone = Math.max(16, Math.min(32, r.width * 0.3));
+          const edge = e.clientX - r.left < zone ? -1 : r.right - e.clientX < zone ? 1 : 0;
+          if (!edge) return;
+          const sx = e.clientX;
+          longPressRef.current = setTimeout(() => {
+            if (pinchingRef.current || dragInfoRef.current.moved) return;
+            resizeRef.current = { id: b.id, edge, sx, w0: r.width / zoomRef.current, f: zoomRef.current };
+            setResizingId(b.id);
+            try {
+              if (navigator.vibrate) navigator.vibrate(15);
+            } catch {
+            }
+          }, 380);
         },
         onPointerMove: (e) => {
-          if (draggingId !== b.id) return;
+          if (dragInfoRef.current.id !== b.id) return;
           if (pinchingRef.current) {
             dragInfoRef.current.moved = true;
+            clearTimeout(longPressRef.current);
+            return;
+          }
+          const rr = resizeRef.current;
+          if (rr && rr.id === b.id) {
+            const w = clamp(rr.w0 + rr.edge * (e.clientX - rr.sx) * 2 / rr.f, 50, 600);
+            updateBranch(b.id, { w: Math.round(w) });
             return;
           }
           const dx = e.clientX - dragInfoRef.current.x;
           const dy = e.clientY - dragInfoRef.current.y;
-          if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragInfoRef.current.moved = true;
-          if (dragInfoRef.current.moved) movePalloncino(b.id, e.clientX, e.clientY);
+          if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+            dragInfoRef.current.moved = true;
+            clearTimeout(longPressRef.current);
+          }
+          if (dragInfoRef.current.moved) movePalloncino(b.id, e.clientX - (dragInfoRef.current.ox || 0), e.clientY - (dragInfoRef.current.oy || 0));
         },
         onPointerUp: () => {
-          if (draggingId !== b.id) return;
+          clearTimeout(longPressRef.current);
+          if (resizeRef.current && resizeRef.current.id === b.id) {
+            resizeRef.current = null;
+            dragInfoRef.current.id = null;
+            setResizingId(null);
+            setDraggingId(null);
+            return;
+          }
+          if (dragInfoRef.current.id !== b.id) return;
+          dragInfoRef.current.id = null;
           setDraggingId(null);
           if (pinchingRef.current) {
             setHoverTargetId(null);
@@ -25843,18 +26114,22 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
           setHoverTargetId(null);
         },
         onPointerCancel: () => {
+          clearTimeout(longPressRef.current);
+          dragInfoRef.current.id = null;
+          resizeRef.current = null;
+          setResizingId(null);
           setDraggingId(null);
           setHoverTargetId(null);
         },
         style: {
           position: "absolute",
-          left: `${b.x}%`,
+          left: isEditing ? editLeft : `${b.x}%`,
           top: `${b.y}%`,
-          transform: `translate(${isEditing ? shiftX(b.x) : "-50%"}, -50%) scale(${isDragging ? 1.1 : 1})`,
-          width: isEditing ? Math.round(Math.max(250, 190 * b.scale) * ez) : "max-content",
-          maxWidth: isEditing ? "92vw" : Math.round(115 * b.scale * mz),
-          touchAction: isEditing ? "auto" : "none",
-          cursor: isEditing ? "text" : isDragging ? "grabbing" : "grab",
+          transform: `translate(-50%, -50%) scale(${isDragging && !isResizing ? 1.1 : 1})`,
+          width: isEditing ? editW : b.w ? Math.round(b.w * mz) : "max-content",
+          maxWidth: isEditing ? void 0 : b.w ? void 0 : Math.round(115 * b.scale * mz),
+          touchAction: "none",
+          cursor: isEditing ? "text" : isResizing ? "ew-resize" : isDragging ? "grabbing" : "grab",
           transition: isDragging ? "none" : "transform 0.12s ease",
           zIndex: isEditing ? 20 : isDragging ? 5 : 1
         }
@@ -25877,6 +26152,8 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             overflowWrap: "anywhere",
+            outline: isResizing && !isEditing ? `2px dashed ${C.ink}` : "none",
+            outlineOffset: 3,
             boxShadow: isEditing ? `0 0 0 3px ${C.ink}, 0 8px 22px rgba(38,55,75,0.3)` : isSelectedForConnect ? `0 0 0 3px ${C.ink}, 0 3px 10px rgba(38,55,75,0.14)` : isDropTarget ? `0 0 0 3px ${C.blue}, 0 4px 14px rgba(38,55,75,0.24)` : isDragging ? "0 8px 20px rgba(38,55,75,0.28)" : "0 3px 10px rgba(38,55,75,0.14)",
             userSelect: isEditing ? "text" : "none"
           }
@@ -25893,7 +26170,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
           onKeyDown: (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              setEditingId(null);
+              finishEditing();
             }
           },
           placeholder: "scrivi qui",
@@ -25916,7 +26193,9 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
             padding: 0
           }
         }) : b.text || h("span", { style: { opacity: 0.75, fontWeight: 400 } }, "scrivi qui"),
-        h(
+        isEditing && handle(-1),
+        isEditing && handle(1),
+        isEditing && h(
           "button",
           {
             onPointerDown: (e) => e.stopPropagation(),
@@ -25954,13 +26233,23 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     {
       ref: viewportRef,
       "data-map-viewport": "1",
+      onPointerDownCapture: vpPointerDownCapture,
+      onPointerDown: vpPointerDown,
+      onPointerMoveCapture: vpPointerMove,
+      onPointerUpCapture: vpPointerEnd,
+      onPointerCancelCapture: vpPointerEnd,
+      onContextMenu: (e) => e.preventDefault(),
       style: {
         position: "relative",
         width: "100%",
         height: box.h || 480,
-        overflow: "auto",
-        touchAction: "pan-x pan-y",
+        overflow: "hidden",
+        touchAction: "none",
         overscrollBehavior: "contain",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitTouchCallout: "none",
+        cursor: panDragRef.current && panDragRef.current.moved ? "grabbing" : "grab",
         borderRadius: 14,
         background: "rgba(46,43,39,0.025)",
         border: `1px dashed ${C.border}`
@@ -25970,8 +26259,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
       "div",
       {
         ref: canvasRef,
-        onClick: handleCanvasClick,
-        style: { position: "relative", width: W, height: H, cursor: "copy" }
+        style: { position: "absolute", left: 0, top: 0, width: W, height: H, transform: `translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)`, transformOrigin: "0 0" }
       },
       h(
         "svg",
@@ -26015,16 +26303,16 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
 
   let panel;
   if (editingCenter) {
-    panel = h("div", { style: { padding: "14px 4px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, h("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Argomento centrale"), h("button", { onClick: () => setEditingCenter(false), style: { background: "none", border: "none", color: C.blue, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))" } }, "Fatto")), h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: 0, flex: 1 } }, "Scrivi il titolo direttamente nel cerchio centrale, oppure dettalo."), h(DictateButton, { color: C.blue, size: 44, onResult: (t) => setTopic(t) })));
+    panel = h("div", { style: { padding: "14px 4px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, h("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Argomento centrale"), h("button", { onClick: () => setEditingCenter(false), style: { background: "none", border: "none", color: C.blue, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))" } }, "Fatto")), h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: 0, flex: 1 } }, "Scrivi il titolo nel cerchio centrale (o dettalo), poi tocca uno spazio vuoto per confermare."), h(DictateButton, { color: C.blue, size: 44, onResult: (t) => setTopic(t) })));
   } else if (editingNode) {
     panel = h("div", { style: { padding: "14px 4px 20px", marginTop: "auto", borderTop: `1px solid ${C.border}` } }, h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, h("span", { style: { fontWeight: 700, color: C.ink, fontSize: "calc(0.92em * var(--fs))" } }, "Modifica ramo"), h(
       "button",
       {
-        onClick: () => setEditingId(null),
+        onClick: finishEditing,
         style: { background: "none", border: "none", color: C.blue, fontWeight: 700, cursor: "pointer", fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))" }
       },
       "Fatto"
-    )), h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: "0 0 12px" } }, "Scrivi il testo direttamente nel palloncino qui sopra. La misura che scegli vale anche per i prossimi palloncini."), h("div", { style: { display: "flex", gap: 7, marginBottom: 12, flexWrap: "wrap" } }, MAP_COLORS.map((c) => h(
+    )), h("p", { style: { color: C.inkSoft, fontSize: "calc(0.82em * var(--fs))", margin: "0 0 12px" } }, "Scrivi nel palloncino qui sopra e tocca uno spazio vuoto della mappa per confermare. Trascina le maniglie ai lati per allargarlo o stringerlo. La misura che scegli vale anche per i prossimi palloncini."), h("div", { style: { display: "flex", gap: 7, marginBottom: 12, flexWrap: "wrap" } }, MAP_COLORS.map((c) => h(
       "button",
       {
         key: c,
@@ -26462,6 +26750,465 @@ function InterrogazioneScreen({ onSave, archivio = [], visible = true, onProgres
     status === "loading" ? "Preparo la prima domanda\u2026" : "Inizia l'interrogazione"
   ));
 }
+const MATE_COLOR = "#A0672D";
+const MATE_LOCAL_KEY = "chiarostudio-lezioni-matematica";
+const MATE_SYSTEM = `Sei un insegnante di matematica e geometria paziente, che prepara lezioni per studenti con DSA (dislessia, discalculia, disgrafia). Lo studente ti dice l'argomento che vuole studiare e il livello di scuola. Prepara una lezione spezzettata in piccole unit\xE0, ognuna con una spiegazione breve e chiara, un esempio svolto e una domanda di verifica.
+
+Regole di stile:
+- Frasi brevi, parole semplici. Ogni termine tecnico (es. "ipotenusa", "denominatore", "incognita") va spiegato subito con parole concrete la prima volta che lo usi.
+- Una sola idea per unit\xE0. Vai per gradi: dalla cosa pi\xF9 semplice alla pi\xF9 difficile.
+- Scrivi i calcoli in modo leggibile, un passaggio per riga, con simboli normali: \xB2 \xB3 √ π \xB7 : \xD7 ≤ ≥ ≠, frazioni come 3/4. Niente LaTeX, niente simboli $.
+- Usa esempi concreti della vita di tutti i giorni quando aiutano (una pizza divisa in fette, un giardino da recintare...).
+- Nei testi puoi usare "- " a inizio riga per gli elenchi o i passaggi, e **grassetto** per le parole chiave. Non usare titoli con #.
+- Se un disegno aiuta (geometria, grafici, frazioni), mettilo nel campo "diagramma" come SVG semplice: viewBox circa 0 0 320 220, solo linee sottili, colore currentColor, sfondo trasparente, etichette leggibili (font-size 13 o pi\xF9). Negli attributi SVG usa SEMPRE gli apici singoli (es. stroke='currentColor'), mai le virgolette doppie. Se il disegno non serve, lascia "".
+
+La domanda di verifica di ogni unit\xE0:
+- \xE8 una domanda a scelta multipla con 3 opzioni, una sola corretta, che controlla proprio l'idea spiegata in quell'unit\xE0;
+- le opzioni sbagliate devono corrispondere agli errori tipici che fa davvero uno studente (es. sommare invece di moltiplicare, dimenticare di elevare al quadrato, confondere area e perimetro);
+- per ogni opzione scrivi una "spiegazione": per quelle sbagliate spiega con gentilezza QUALE errore porta a quella risposta e IN QUALE PASSAGGIO si sbaglia, e poi come si fa nel modo giusto; per quella giusta conferma perch\xE9 \xE8 corretta. Non scrivere solo "\xE8 sbagliato".
+
+Alla fine metti 3 esercizi di difficolt\xE0 crescente (dal pi\xF9 facile al pi\xF9 impegnativo), con il risultato e lo svolgimento passo per passo.
+
+Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo, con questa forma:
+{"titolo":"...","introduzione":"2-3 frasi su cosa impareremo e a cosa serve","unita":[{"titolo":"...","spiegazione":"...","esempio":"esempio svolto passo per passo","diagramma":"","verifica":{"domanda":"...","opzioni":[{"testo":"...","corretta":true,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."},{"testo":"...","corretta":false,"spiegazione":"..."}]}}],"esercizi":[{"testo":"...","risultato":"...","svolgimento":"- passaggio 1\\n- passaggio 2"}]}
+Le unit\xE0 devono essere da 4 a 6. Se l'argomento non \xE8 di matematica o geometria, prepara comunque la lezione sulla parte matematica pi\xF9 vicina all'argomento.`;
+const MATE_CHECK_SYSTEM = `Sei un insegnante di matematica paziente che corregge l'esercizio di uno studente con DSA. Ricevi il testo dell'esercizio, il risultato giusto, lo svolgimento giusto e la risposta dello studente (a volte con i suoi passaggi).
+- Accetta come giuste le risposte equivalenti: 0,5 = 1/2 = 50%; virgola o punto decimale; unit\xE0 di misura mancanti o scritte in altro modo; piccoli arrotondamenti ragionevoli.
+- Se la risposta \xE8 giusta, dillo con calore e ripeti in una frase perch\xE9 funziona.
+- Se \xE8 sbagliata NON limitarti a dire "hai sbagliato": individua il punto preciso dell'errore (es. "nel secondo passaggio hai sommato i lati invece di moltiplicarli"), spiega perch\xE9 \xE8 sbagliato e mostra come si fa nel modo giusto, passo per passo. Se lo studente ha scritto solo il risultato, ricostruisci l'errore pi\xF9 probabile che porta al suo numero e dillo come ipotesi ("Probabilmente hai...").
+- Se la risposta \xE8 quasi giusta (es. calcolo giusto ma errore di segno, di unit\xE0 di misura o di arrotondamento) usa "quasi".
+- Frasi brevi e gentili, simboli normali (\xB2 √ π \xB7), niente LaTeX. Puoi usare "- " per i passaggi.
+Rispondi SOLO con JSON valido: {"esito":"giusto"|"quasi"|"sbagliato","spiegazione":"..."}`;
+function parseJsonLoose(raw) {
+  const cleaned = String(raw || "").replace(/```json|```/g, "").trim();
+  const a = cleaned.indexOf("{");
+  const b = cleaned.lastIndexOf("}");
+  if (a < 0 || b <= a) throw new Error("json");
+  return JSON.parse(cleaned.slice(a, b + 1));
+}
+function shuffleArr(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function normalizeLesson(obj) {
+  if (!obj || !Array.isArray(obj.unita) || obj.unita.length === 0) throw new Error("lezione");
+  const unita = obj.unita.map((u) => {
+    const v = u && u.verifica || {};
+    let opzioni = Array.isArray(v.opzioni) ? v.opzioni.map((o) => ({ testo: String(o && o.testo || ""), corretta: !!(o && o.corretta), spiegazione: String(o && o.spiegazione || "") })).filter((o) => o.testo) : [];
+    if (opzioni.length && !opzioni.some((o) => o.corretta)) opzioni[0].corretta = true;
+    return {
+      titolo: String(u && u.titolo || "Unit\xE0"),
+      spiegazione: String(u && u.spiegazione || ""),
+      esempio: String(u && u.esempio || ""),
+      diagramma: sanitizeSvg(String(u && u.diagramma || "").replace(/\\"/g, '"')) || "",
+      verifica: opzioni.length >= 2 ? { domanda: String(v.domanda || "Quale risposta \xE8 giusta?"), opzioni: shuffleArr(opzioni) } : null
+    };
+  });
+  const esercizi = (Array.isArray(obj.esercizi) ? obj.esercizi : []).map((e) => ({ testo: String(e && e.testo || ""), risultato: String(e && e.risultato || ""), svolgimento: String(e && e.svolgimento || "") })).filter((e) => e.testo);
+  return { titolo: String(obj.titolo || "Lezione"), introduzione: String(obj.introduzione || ""), unita, esercizi };
+}
+function mateCacheKey(topic, livello) {
+  const t = normalizeTopic(topic || "");
+  return t && t.length <= 80 ? `matematica:${livello}:${t}` : null;
+}
+function loadMateLocal() {
+  try {
+    return JSON.parse(window.localStorage.getItem(MATE_LOCAL_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+function saveMateLocal(key, lessonJson) {
+  try {
+    const all = loadMateLocal();
+    all[key] = lessonJson;
+    const keys = Object.keys(all);
+    if (keys.length > 40) delete all[keys[0]];
+    window.localStorage.setItem(MATE_LOCAL_KEY, JSON.stringify(all));
+  } catch {
+  }
+}
+async function generateMathLesson(topic, livello, { fresh = false } = {}) {
+  const key = mateCacheKey(topic, livello);
+  if (key && !fresh) {
+    const local = loadMateLocal()[key];
+    if (local) {
+      try {
+        return { lesson: normalizeLesson(JSON.parse(local)), source: "local" };
+      } catch {
+      }
+    }
+    const shared = await sharedCacheGet(key);
+    if (shared) {
+      try {
+        const lesson = normalizeLesson(JSON.parse(shared));
+        saveMateLocal(key, shared);
+        return { lesson, source: "shared" };
+      } catch {
+      }
+    }
+  }
+  const livelloTesto = livello === "superiori" ? "scuola superiore (14-18 anni)" : "scuola media (11-13 anni)";
+  let lesson = null;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2 && !lesson; attempt++) {
+    try {
+      const raw = await callClaude({ system: MATE_SYSTEM, userText: `Argomento: ${topic}
+Livello: ${livelloTesto}`, maxTokens: 8e3 });
+      lesson = normalizeLesson(parseJsonLoose(raw));
+    } catch (e) {
+      lastErr = e;
+      if (e && e.message && e.message !== "json" && e.message !== "lezione" && !(e instanceof SyntaxError)) throw e;
+    }
+  }
+  if (!lesson) throw new Error(lastErr && lastErr.message && lastErr.message.length > 12 ? lastErr.message : "Non sono riuscito a preparare la lezione. Riprova tra poco.");
+  const json = JSON.stringify(lesson);
+  if (key) {
+    saveMateLocal(key, json);
+    if (!fresh) sharedCacheSet(key, json);
+  }
+  return { lesson, source: "new" };
+}
+async function checkMathExercise(ex, answer) {
+  const raw = await callClaude({
+    system: MATE_CHECK_SYSTEM,
+    userText: `Esercizio: ${ex.testo}
+Risultato giusto: ${ex.risultato}
+Svolgimento giusto:
+${ex.svolgimento}
+
+Risposta dello studente:
+${answer}`,
+    maxTokens: 900
+  });
+  try {
+    const r = parseJsonLoose(raw);
+    const esito = ["giusto", "quasi", "sbagliato"].includes(r.esito) ? r.esito : "sbagliato";
+    return { esito, spiegazione: String(r.spiegazione || "") };
+  } catch {
+    return { esito: "sbagliato", spiegazione: raw };
+  }
+}
+function MiniSpeak({ text }) {
+  const { speak, stop, speaking, supported } = useSpeech();
+  if (!supported) return null;
+  return React.createElement("button", {
+    onClick: (e) => {
+      e.stopPropagation();
+      speaking ? stop() : speak(text);
+    },
+    "aria-label": speaking ? "Ferma la lettura" : "Ascolta",
+    title: speaking ? "Ferma" : "Ascolta",
+    style: { flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: `1.5px solid ${MATE_COLOR}`, background: speaking ? MATE_COLOR : "transparent", color: speaking ? "#FBFAF4" : MATE_COLOR, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }
+  }, speaking ? React.createElement(Square, { size: 13 }) : React.createElement(Volume2, { size: 14 }));
+}
+function MateDiagram({ svg }) {
+  if (!svg) return null;
+  return React.createElement("div", { className: "mate-diagram", style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, margin: "12px 0", color: C.ink, textAlign: "center" }, dangerouslySetInnerHTML: { __html: svg } });
+}
+function MatematicaScreen({ onSave, initialState, onStateChange }) {
+  const h = React.createElement;
+  const init = initialState || {};
+  const [topic, setTopic] = useState(init.topic || "");
+  const [livello, setLivello] = useState(init.livello || "medie");
+  const [status, setStatus] = useState(init.status || "input");
+  const [error, setError] = useState(init.error || "");
+  const [lesson, setLesson] = useState(init.lesson || null);
+  const [source, setSource] = useState(init.source || null);
+  const [answers, setAnswers] = useState(init.answers || {});
+  const [current, setCurrent] = useState(init.current || 0);
+  const [exercises, setExercises] = useState(init.exercises || {});
+  const [videoState, setVideoState] = useState(init.videoState || null);
+  const [savedId, setSavedId] = useState(init.savedId || null);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [easyRead, setEasyRead] = usePref(EASY_READ_KEY, false);
+  const unitRefs = useRef({});
+  const scrollToRef = useRef(null);
+  useEffect(() => {
+    if (onStateChange) onStateChange({ topic, livello, status: status === "loading" ? "input" : status, error, lesson, source, answers, current, exercises, videoState, savedId });
+  }, [topic, livello, status, error, lesson, source, answers, current, exercises, videoState, savedId]);
+  useEffect(() => {
+    const k = scrollToRef.current;
+    if (k === null || k === void 0) return;
+    scrollToRef.current = null;
+    const el = unitRefs.current[k];
+    if (el && el.scrollIntoView) setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }, [current]);
+  const start = async (fresh) => {
+    const t = topic.trim();
+    if (!t) return;
+    setStatus("loading");
+    setError("");
+    try {
+      const { lesson: l, source: src } = await generateMathLesson(t, livello, { fresh });
+      setLesson(l);
+      setSource(src);
+      setAnswers({});
+      setExercises({});
+      setCurrent(0);
+      setVideoState(null);
+      setSavedId(null);
+      setStatus("lesson");
+    } catch (e) {
+      setError(e && e.message || "Non sono riuscito a preparare la lezione. Riprova.");
+      setStatus("input");
+    }
+  };
+  const reset = () => {
+    setStatus("input");
+    setLesson(null);
+    setAnswers({});
+    setExercises({});
+    setCurrent(0);
+    setVideoState(null);
+    setSavedId(null);
+    setError("");
+  };
+  const save = () => {
+    if (!lesson) return;
+    const content = JSON.stringify({ v: 1, topic, livello, lesson, answers, current, exercises: Object.fromEntries(Object.entries(exercises).map(([k, v]) => [k, { answer: v.answer || "", esito: v.esito || null, spiegazione: v.spiegazione || "", showSol: !!v.showSol, status: v.status === "checking" ? "idle" : v.status || "idle" }])) });
+    const id = onSave({ type: "matematica", title: `Matematica — ${lesson.titolo}`, content, materia: "matematica" }, savedId);
+    if (id) setSavedId(id);
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1800);
+  };
+  const card = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, marginBottom: 16 };
+  const small = { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", lineHeight: 1.45 };
+  if (status !== "lesson" || !lesson) {
+    const loading = status === "loading";
+    return h(
+      "div",
+      { style: { maxWidth: 640 } },
+      h(PageHeader, { title: "Matematica e geometria", subtitle: "Scrivi l'argomento: lo spieghiamo un pezzetto alla volta, con una domanda dopo ogni pezzo." }),
+      error && h(ErrorBanner, { text: error }),
+      h(
+        "div",
+        { style: { position: "relative", marginBottom: 14 } },
+        h("textarea", { value: topic, onChange: (e) => setTopic(e.target.value), placeholder: "Es. il teorema di Pitagora, le frazioni, l'area del cerchio", rows: 3, style: textAreaStyle, "aria-label": "Argomento di matematica" }),
+        h("div", { style: { position: "absolute", bottom: 10, right: 10 } }, h(DictateButton, { onResult: (r) => setTopic((t) => t ? t + " " + r : r), color: MATE_COLOR }))
+      ),
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 18 } },
+        h("span", { style: { ...small, marginRight: 4 } }, "Livello:"),
+        [["medie", "Scuola media"], ["superiori", "Scuola superiore"]].map(([id, label]) => h("button", {
+          key: id,
+          onClick: () => setLivello(id),
+          "aria-pressed": livello === id,
+          style: { ...secondaryBtnStyle, background: livello === id ? MATE_COLOR : C.card, color: livello === id ? "#FBFAF4" : C.ink, borderColor: livello === id ? MATE_COLOR : C.border }
+        }, label))
+      ),
+      h(PrimaryButton, { onClick: () => start(false), disabled: !topic.trim() || loading, color: MATE_COLOR, Icon: loading ? Loader2 : Sparkles }, loading ? "Preparo la lezione…" : "Inizia la lezione"),
+      loading && h("p", { style: { ...small, marginTop: 12 } }, "Sto dividendo l'argomento in piccole unit\xE0 con le domande di verifica e gli esercizi. Pu\xF2 volerci circa un minuto.")
+    );
+  }
+  const units = lesson.unita;
+  const total = units.length;
+  const unitDone = (i) => {
+    const a = answers[i];
+    return !units[i].verifica || !!(a && (a.correct || a.revealed));
+  };
+  const allUnitsDone = current >= total;
+  const firstTry = units.reduce((n, u, i) => n + (answers[i] && answers[i].firstTry ? 1 : 0), 0);
+  const withCheck = units.filter((u) => u.verifica).length;
+  const choose = (i, oi) => {
+    setAnswers((prev) => {
+      const old = prev[i] || {};
+      if (old.correct || old.revealed) return prev;
+      const ok = !!units[i].verifica.opzioni[oi].corretta;
+      return { ...prev, [i]: { chosen: oi, correct: ok, tries: (old.tries || 0) + 1, firstTry: ok && !(old.tries > 0), wrong: ok ? old.wrong || [] : [...old.wrong || [], oi] } };
+    });
+  };
+  const retryUnit = (i) => setAnswers((prev) => ({ ...prev, [i]: { ...prev[i] || {}, chosen: null } }));
+  const revealUnit = (i) => setAnswers((prev) => ({ ...prev, [i]: { ...prev[i] || {}, revealed: true, chosen: units[i].verifica.opzioni.findIndex((o) => o.corretta) } }));
+  const goNext = (i) => {
+    scrollToRef.current = i + 1 < total ? i + 1 : "esercizi";
+    setCurrent(Math.max(current, i + 1));
+  };
+  const setEx = (i, patch) => setExercises((prev) => ({ ...prev, [i]: { ...prev[i] || {}, ...patch } }));
+  const checkEx = async (i) => {
+    const st = exercises[i] || {};
+    const ans = (st.answer || "").trim();
+    if (!ans) return;
+    setEx(i, { status: "checking", error: "" });
+    try {
+      const r = await checkMathExercise(lesson.esercizi[i], ans);
+      setEx(i, { status: "done", esito: r.esito, spiegazione: r.spiegazione, tries: (st.tries || 0) + 1 });
+    } catch (e) {
+      setEx(i, { status: "idle", error: e && e.message || "Non sono riuscito a correggere. Riprova." });
+    }
+  };
+  const renderUnit = (u, i) => {
+    const a = answers[i] || {};
+    const v = u.verifica;
+    const chosen = a.chosen !== null && a.chosen !== void 0 ? v && v.opzioni[a.chosen] : null;
+    const done = unitDone(i);
+    const speech = [u.titolo, u.spiegazione, u.esempio ? "Esempio. " + u.esempio : ""].filter(Boolean).join("\n");
+    return h(
+      "div",
+      { key: i, ref: (el) => unitRefs.current[i] = el, "data-mate-unit": i, style: { ...card, scrollMarginTop: 16 } },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 } },
+        h("span", { style: { background: MATE_COLOR, color: "#FBFAF4", borderRadius: 999, padding: "3px 11px", fontWeight: 700, fontSize: "calc(0.8em * var(--fs))" } }, `Unit\xE0 ${i + 1} di ${total}`),
+        h("h3", { style: { margin: 0, color: C.ink, fontSize: "calc(1.08em * var(--fs))", flex: "1 1 200px" } }, u.titolo),
+        h(SpeakButton, { text: speech, color: MATE_COLOR })
+      ),
+      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.65 } }, h(FormattedText, { text: u.spiegazione, interactive: false })),
+      h(MateDiagram, { svg: u.diagramma }),
+      u.esempio && h(
+        "div",
+        { className: easyRead ? "chiaro-easy" : void 0, style: { background: "rgba(160,103,45,0.07)", borderLeft: `4px solid ${MATE_COLOR}`, borderRadius: 10, padding: "12px 14px", margin: "12px 0", color: C.ink, lineHeight: 1.6 } },
+        h("div", { style: { fontWeight: 700, marginBottom: 6, color: MATE_COLOR } }, "Esempio svolto"),
+        h(FormattedText, { text: u.esempio, interactive: false })
+      ),
+      v && h(
+        "div",
+        { style: { borderTop: `1px dashed ${C.border}`, marginTop: 14, paddingTop: 14 } },
+        h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 4 } }, "❓ Verifica"),
+        h("div", { style: { color: C.ink, marginBottom: 10, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "flex-start" } }, h("span", { style: { flex: 1 } }, v.domanda), h(MiniSpeak, { text: v.domanda + "\n" + v.opzioni.map((o, k) => `${String.fromCharCode(65 + k)}: ${o.testo}`).join("\n") })),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, v.opzioni.map((o, oi) => {
+          const isChosen = a.chosen === oi;
+          const wasWrong = (a.wrong || []).includes(oi);
+          const showRight = (a.correct || a.revealed) && o.corretta;
+          let bg = C.card, border = C.border, col = C.ink;
+          if (showRight) {
+            bg = "rgba(107,143,94,0.14)";
+            border = C.moss;
+          } else if (isChosen && !o.corretta || wasWrong) {
+            bg = "rgba(140,78,78,0.08)";
+            border = C.wine;
+            col = wasWrong && !isChosen ? C.inkSoft : C.ink;
+          }
+          const locked = done || isChosen && !o.corretta;
+          return h("button", {
+            key: oi,
+            "data-mate-opt": `${i}-${oi}`,
+            onClick: () => !locked && !wasWrong && choose(i, oi),
+            disabled: locked || wasWrong,
+            style: { textAlign: "left", padding: "11px 14px", borderRadius: 12, border: `1.5px solid ${border}`, background: bg, color: col, fontFamily: FONT, fontSize: "calc(0.95em * var(--fs))", cursor: locked || wasWrong ? "default" : "pointer", lineHeight: 1.45, textDecoration: wasWrong && !isChosen ? "line-through" : "none" }
+          }, h("b", null, String.fromCharCode(65 + oi), ". "), o.testo, showRight ? " ✓" : "");
+        })),
+        chosen && h(
+          "div",
+          { role: "status", style: { marginTop: 12, borderRadius: 12, padding: "12px 14px", background: chosen.corretta ? "rgba(107,143,94,0.12)" : "rgba(224,114,79,0.1)", border: `1px solid ${chosen.corretta ? "rgba(107,143,94,0.45)" : "rgba(224,114,79,0.4)"}`, color: C.ink, lineHeight: 1.55 } },
+          h("div", { style: { fontWeight: 700, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 } }, h("span", { style: { flex: 1 } }, chosen.corretta ? a.revealed && !a.correct ? "Ecco la risposta giusta" : "Giusto! \u{1F44F}" : "Non \xE8 questa. Vediamo dov'\xE8 l'errore:"), h(MiniSpeak, { text: chosen.spiegazione })),
+          h(FormattedText, { text: chosen.spiegazione || (chosen.corretta ? "Risposta corretta." : "Questa risposta non \xE8 corretta."), interactive: false }),
+          !chosen.corretta && h(
+            "div",
+            { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 } },
+            h("button", { onClick: () => retryUnit(i), style: { ...secondaryBtnStyle, borderColor: MATE_COLOR, color: MATE_COLOR } }, "↻ Riprova"),
+            h("button", { onClick: () => revealUnit(i), style: secondaryBtnStyle }, "Mostrami la risposta giusta")
+          )
+        ),
+        !chosen && (a.wrong || []).length > 0 && !done && h("p", { style: { ...small, margin: "10px 0 0" } }, "Scegli un'altra risposta.")
+      ),
+      done && current === i && h("div", { style: { marginTop: 14 } }, h(PrimaryButton, { onClick: () => goNext(i), color: MATE_COLOR, Icon: ChevronRight }, i + 1 < total ? "Vai all'unit\xE0 successiva" : "Vai agli esercizi finali"))
+    );
+  };
+  const renderExercise = (ex, i) => {
+    const st = exercises[i] || {};
+    const checking = st.status === "checking";
+    const res = st.status === "done" ? st : null;
+    const tone = res ? res.esito === "giusto" ? ["rgba(107,143,94,0.12)", "rgba(107,143,94,0.45)", "Giusto! \u{1F44F}"] : res.esito === "quasi" ? ["rgba(232,168,116,0.16)", "rgba(232,168,116,0.6)", "Quasi! Manca poco:"] : ["rgba(224,114,79,0.1)", "rgba(224,114,79,0.4)", "Non ancora. Ecco dov'\xE8 l'errore:"] : null;
+    return h(
+      "div",
+      { key: i, "data-mate-ex": i, style: card },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
+        h("span", { style: { fontWeight: 700, color: MATE_COLOR, flex: 1 } }, `Esercizio ${i + 1}`, i === 0 ? " \xB7 facile" : i === lesson.esercizi.length - 1 ? " \xB7 pi\xF9 impegnativo" : ""),
+        h(MiniSpeak, { text: ex.testo })
+      ),
+      h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { color: C.ink, lineHeight: 1.6, marginBottom: 12 } }, h(FormattedText, { text: ex.testo, interactive: false })),
+      h(
+        "div",
+        { style: { position: "relative", marginBottom: 8 } },
+        h("textarea", {
+          value: st.answer || "",
+          onChange: (e) => setEx(i, { answer: e.target.value, status: st.status === "done" ? "idle" : st.status }),
+          placeholder: "Scrivi qui il risultato. Se vuoi, anche i passaggi: cos\xEC ti dico esattamente dove sbagli.",
+          rows: 3,
+          style: { ...textAreaStyle, minHeight: 80 },
+          "aria-label": `Risposta all'esercizio ${i + 1}`
+        }),
+        h("div", { style: { position: "absolute", bottom: 10, right: 10 } }, h(DictateButton, { onResult: (r) => setEx(i, { answer: st.answer ? st.answer + " " + r : r }), color: MATE_COLOR }))
+      ),
+      st.error && h("p", { style: { color: C.wine, margin: "0 0 8px" } }, st.error),
+      h(
+        "div",
+        { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        h("button", { onClick: () => checkEx(i), disabled: checking || !(st.answer || "").trim(), style: { ...secondaryBtnStyle, background: MATE_COLOR, borderColor: MATE_COLOR, color: "#FBFAF4", opacity: checking || !(st.answer || "").trim() ? 0.55 : 1 } }, checking ? h(React.Fragment, null, h(Loader2, { size: 13, className: "chiaro-spin" }), " Correggo…") : "Controlla"),
+        h("button", { onClick: () => setEx(i, { showSol: !st.showSol }), style: secondaryBtnStyle }, st.showSol ? "Nascondi la soluzione" : res || st.tries ? "Mostra la soluzione" : "Non so farlo: mostrami la soluzione")
+      ),
+      res && h(
+        "div",
+        { role: "status", style: { marginTop: 12, borderRadius: 12, padding: "12px 14px", background: tone[0], border: `1px solid ${tone[1]}`, color: C.ink, lineHeight: 1.55 } },
+        h("div", { style: { fontWeight: 700, marginBottom: 6, display: "flex", gap: 8, alignItems: "center" } }, h("span", { style: { flex: 1 } }, tone[2]), h(MiniSpeak, { text: res.spiegazione })),
+        h(FormattedText, { text: res.spiegazione, interactive: false })
+      ),
+      st.showSol && h(
+        "div",
+        { style: { marginTop: 12, background: "rgba(160,103,45,0.07)", borderLeft: `4px solid ${MATE_COLOR}`, borderRadius: 10, padding: "12px 14px", color: C.ink, lineHeight: 1.6 } },
+        h("div", { style: { fontWeight: 700, marginBottom: 6 } }, "Soluzione: ", ex.risultato),
+        h(FormattedText, { text: ex.svolgimento, interactive: false })
+      )
+    );
+  };
+  return h(
+    "div",
+    { style: { maxWidth: 760 } },
+    h("style", null, EASY_READ_CSS + ".mate-diagram svg{max-width:100%;height:auto;max-height:320px}"),
+    h(PageHeader, { title: lesson.titolo, subtitle: "Matematica e geometria \xB7 " + (livello === "superiori" ? "scuola superiore" : "scuola media") }),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 } },
+      h("button", { onClick: reset, style: secondaryBtnStyle }, "← Nuovo argomento"),
+      h("button", {
+        onClick: () => setEasyRead(!easyRead),
+        "aria-pressed": !!easyRead,
+        style: { ...secondaryBtnStyle, background: easyRead ? C.ink : C.card, color: easyRead ? "#FBFAF4" : C.ink, borderColor: easyRead ? C.ink : C.border }
+      }, "☰ Lettura facilitata"),
+      h("button", { onClick: save, style: { ...secondaryBtnStyle, background: savedFlash ? MATE_COLOR : C.card, color: savedFlash ? "#FBFAF4" : C.ink, borderColor: savedFlash ? MATE_COLOR : C.border } }, savedFlash ? "✓ Salvato" : savedId ? "\u{1F4BE} Salva i progressi" : "\u{1F4BE} Salva nell'archivio")
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }, "aria-label": "Avanzamento" },
+      units.map((u, i) => {
+        const reached = i <= current;
+        const a = answers[i];
+        const mark = a && a.correct ? "✓" : "";
+        return h("button", {
+          key: i,
+          title: u.titolo,
+          disabled: !reached,
+          onClick: () => {
+            const el = unitRefs.current[i];
+            if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          },
+          style: { minWidth: 34, height: 30, borderRadius: 999, border: `1.5px solid ${reached ? MATE_COLOR : C.border}`, background: i < current ? MATE_COLOR : C.card, color: i < current ? "#FBFAF4" : reached ? MATE_COLOR : C.inkSoft, fontWeight: 700, fontFamily: FONT, cursor: reached ? "pointer" : "default", fontSize: "calc(0.8em * var(--fs))" }
+        }, `${i + 1}${mark ? " " + mark : ""}`);
+      }),
+      h("span", { style: { ...small, alignSelf: "center", marginLeft: 4 } }, allUnitsDone ? "Unit\xE0 completate!" : `Unit\xE0 ${Math.min(current + 1, total)} di ${total}`)
+    ),
+    source !== "new" && h("p", { style: { ...small, margin: "-6px 0 14px" } }, "Lezione gi\xE0 pronta su questo argomento. ", h("button", { onClick: () => start(true), style: { background: "none", border: "none", padding: 0, color: MATE_COLOR, textDecoration: "underline", cursor: "pointer", fontFamily: FONT, fontSize: "inherit" } }, "Preparane una nuova versione")),
+    lesson.introduzione && h("div", { className: easyRead ? "chiaro-easy" : void 0, style: { ...card, background: "rgba(160,103,45,0.06)", color: C.ink, lineHeight: 1.6 } }, h("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, h("div", { style: { flex: 1 } }, h(FormattedText, { text: lesson.introduzione, interactive: false })), h(MiniSpeak, { text: lesson.introduzione }))),
+    units.slice(0, Math.min(current + 1, total)).map(renderUnit),
+    allUnitsDone && h(
+      "div",
+      { ref: (el) => unitRefs.current.esercizi = el, style: { scrollMarginTop: 16 } },
+      withCheck > 0 && h("div", { style: { ...card, background: "rgba(107,143,94,0.1)", border: "1px solid rgba(107,143,94,0.35)", color: C.ink } }, h("b", null, "Hai finito le unit\xE0! "), `Hai risposto giusto al primo tentativo a ${firstTry} verifiche su ${withCheck}.`, firstTry < withCheck ? " Le unit\xE0 dove hai sbagliato si possono rileggere toccando il loro numero qui sopra." : " Ottimo lavoro!"),
+      lesson.esercizi.length > 0 && h("h2", { style: { fontFamily: SERIF, fontWeight: 500, color: C.ink, fontSize: "calc(1.45em * var(--fs))", margin: "22px 0 12px" } }, "Esercizi finali"),
+      lesson.esercizi.map(renderExercise),
+      h("h2", { style: { fontFamily: SERIF, fontWeight: 500, color: C.ink, fontSize: "calc(1.45em * var(--fs))", margin: "22px 0 12px" } }, "Un video per ripassare"),
+      h(TopicVideoBox, { topic: topic.trim().length <= 60 && topic.trim() ? topic.trim() : lesson.titolo, color: MATE_COLOR, state: videoState, onState: setVideoState })
+    )
+  );
+}
 const RIASSUNTO_SYSTEM = "Sei un assistente che scrive riassunti chiari per studenti con DSA, a partire da un argomento, un testo o una foto. Scrivi in prosa scorrevole, frasi brevi e dirette, evidenzia con **doppio asterisco** i 4-6 termini chiave pi\xF9 importanti. Usa '## ' per dividere in 2-4 sezioni tematiche se il contenuto lo giustifica. Rispondi solo con il riassunto.";
 const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 semplice per studenti con DSA, a partire da un argomento, un testo o una foto. Frasi corte, una idea per frase, parole comuni al posto di termini difficili quando possibile (spiega quelli tecnici indispensabili). Usa '## ' per dividere in sezioni brevi. Rispondi solo con il testo semplificato.";
 const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Questi studenti spesso fanno fatica a memorizzare i termini tecnici e a visualizzarli mentalmente: ogni volta che usi un termine tecnico (es. "discriminante", "disequazione", "coefficiente", "verso della disuguaglianza"), spiegalo subito con parole semplici e concrete, non darlo mai per scontato. Non avere fretta di essere breve: \xE8 molto meglio una frase in pi\xF9 che spiega bene, piuttosto che una definizione telegrafica che lo studente non riesce a seguire. Elenca le formule rilevanti con "- ", spiegando ogni simbolo in modo chiaro e comprensibile, con un esempio concreto se aiuta a capire. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", spiegando con calma, con parole semplici, cosa si fa e perch\xE9 \u2014 come se lo spiegassi a voce a uno studente che ha bisogno di tempo per capire, non come una lista di operazioni. Rispondi solo con il formulario.';
@@ -26533,11 +27280,14 @@ function App() {
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
+  const online = useOnlineStatus();
   useEffect(() => {
     loadVoicePref();
     loadSpeedPref();
   }, []);
   const [flashcardLaunch, setFlashcardLaunch] = useState(null);
+  const [lessonNonce, setLessonNonce] = useState(0);
   const [interrAlive, setInterrAlive] = useState(false);
   const [interrInProgress, setInterrInProgress] = useState(false);
   useEffect(() => {
@@ -26572,6 +27322,29 @@ function App() {
     });
     setActive("riassunto");
   };
+  const openSavedLesson = (item) => {
+    let data = null;
+    try {
+      data = JSON.parse(item.content);
+    } catch {
+    }
+    if (!data || !data.lesson) return;
+    setSectionState("matematica", {
+      topic: data.topic || "",
+      livello: data.livello || "medie",
+      status: "lesson",
+      error: "",
+      lesson: data.lesson,
+      source: "archivio",
+      answers: data.answers || {},
+      current: data.current || 0,
+      exercises: data.exercises || {},
+      videoState: null,
+      savedId: item.id
+    });
+    setLessonNonce(Date.now());
+    setActive("matematica");
+  };
   const openFlashcardDeck = (cards) => {
     setFlashcardLaunch({ cards, nonce: Date.now() });
     setActive("flashcard");
@@ -26595,20 +27368,44 @@ function App() {
   useEffect(() => {
     let alive = true;
     setClerkError(false);
+    const enterOffline = (u) => {
+      setOfflineMode(true);
+      setClerkReady(true);
+      setIsSignedIn(true);
+      setIsSubscribed(!!u.abbonato);
+      setIsAdmin(!!u.admin);
+    };
+    const savedUser = readOfflineUser();
+    let isAppOfflineCopy = false;
+    try {
+      isAppOfflineCopy = !!(window.ChiaroAndroid && window.ChiaroAndroid.isOfflineCopy && window.ChiaroAndroid.isOfflineCopy());
+    } catch {
+    }
+    if (savedUser && (isOffline() || isAppOfflineCopy)) {
+      enterOffline(savedUser);
+      return () => {
+        alive = false;
+      };
+    }
     waitForClerk().then((clerk) => {
       if (!alive) return;
+      setOfflineMode(false);
       setClerkReady(true);
       setIsSignedIn(!!clerk.user && !!clerk.session);
       setIsSubscribed(isUserSubscribed(clerk.user));
       setIsAdmin(isUserAdmin(clerk.user));
+      rememberOfflineUser(clerk.user && clerk.session ? clerk.user : null);
       clerk.addListener(({ user, session }) => {
         setIsSignedIn(!!user && !!session);
         setIsSubscribed(isUserSubscribed(user));
         setIsAdmin(isUserAdmin(user));
+        rememberOfflineUser(user && session ? user : null);
       });
     }).catch(() => {
       if (!alive) return;
-      setClerkError(true);
+      const u = readOfflineUser();
+      if (u) enterOffline(u);
+      else setClerkError(true);
     });
     return () => {
       alive = false;
@@ -26638,11 +27435,24 @@ function App() {
     };
   }, []);
   const addToArchivio = (item) => {
+    const id = Date.now() + Math.random();
     setArchivio((prev) => {
-      const next = [{ ...item, id: Date.now() + Math.random(), savedAt: Date.now() }, ...prev];
+      const next = [{ ...item, id, savedAt: Date.now() }, ...prev];
       persistArchivio(next);
       return next;
     });
+    return id;
+  };
+  const saveOrUpdateArchivio = (item, existingId) => {
+    if (existingId && archivio.some((i) => i.id === existingId)) {
+      setArchivio((prev) => {
+        const next = prev.map((i) => i.id === existingId ? { ...i, ...item, savedAt: Date.now() } : i);
+        persistArchivio(next);
+        return next;
+      });
+      return existingId;
+    }
+    return addToArchivio(item);
   };
   const removeFromArchivio = (id) => {
     setArchivio((prev) => {
@@ -26672,7 +27482,7 @@ function App() {
           textAlign: "center"
         }
       },
-      clerkError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { maxWidth: 360 } }, "Non riesco a caricare l'accesso. Controlla la connessione e riprova."), /* @__PURE__ */ React.createElement("button", { onClick: () => setRetryCount((c) => c + 1), style: { ...secondaryBtnStyle, background: C.card } }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }), " Riprova")) : "Caricamento\u2026"
+      clerkError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { maxWidth: 360 } }, isOffline() ? "Sei offline. La prima volta, per entrare su questo dispositivo serve internet: collegati e riprova." : "Non riesco a caricare l'accesso. Controlla la connessione e riprova."), /* @__PURE__ */ React.createElement("button", { onClick: () => setRetryCount((c) => c + 1), style: { ...secondaryBtnStyle, background: C.card } }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15 }), " Riprova")) : "Caricamento\u2026"
     );
   }
   if (!isSignedIn) {
@@ -26763,8 +27573,15 @@ function App() {
     );
   } else if (active === "dizionario") {
     content = /* @__PURE__ */ React.createElement(DizionarioWebScreen, { onSave: addToArchivio });
+  } else if (active === "matematica") {
+    content = /* @__PURE__ */ React.createElement(MatematicaScreen, {
+      key: "matematica-" + lessonNonce,
+      onSave: saveOrUpdateArchivio,
+      initialState: getSectionState("matematica"),
+      onStateChange: (s) => setSectionState("matematica", s)
+    });
   } else if (active === "archivio") {
-    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck, onOpenText: openSavedText });
+    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck, onOpenText: openSavedText, onOpenLesson: openSavedLesson });
   } else if (active === "voce") {
     content = /* @__PURE__ */ React.createElement(VoceScreen, null);
   } else if (active === "segnalazioni") {
@@ -26780,7 +27597,7 @@ function App() {
         @media (max-width: 640px) {
           .chiaro-content { padding: 18px 16px; }
         }
-      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, overflowY: "auto" } }, content, interrAlive && !(SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes("interrogazione") && !isSubscribed) && /* @__PURE__ */ React.createElement("div", { style: { display: active === "interrogazione" ? "block" : "none" } }, /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio, visible: active === "interrogazione", onProgressChange: setInterrInProgress })), interrInProgress && active !== "interrogazione" && /* @__PURE__ */ React.createElement(
+      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, overflowY: "auto" } }, /* @__PURE__ */ React.createElement(OfflineBanner, { online, offlineMode }), content, interrAlive && !(SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes("interrogazione") && !isSubscribed) && /* @__PURE__ */ React.createElement("div", { style: { display: active === "interrogazione" ? "block" : "none" } }, /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio, visible: active === "interrogazione", onProgressChange: setInterrInProgress })), interrInProgress && active !== "interrogazione" && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setActive("interrogazione"),
