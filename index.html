@@ -21673,6 +21673,8 @@ const Menu = makeIcon("\u2630");
 const Shuffle = makeIcon("\u{1F500}");
 const Lock = makeIcon("\u{1F512}");
 const Ruler = makeIcon("\u{1F4D0}");
+const CheckDoc = makeIcon("\u{1F4DD}");
+const Tomato = makeIcon("\u{1F345}");
 const C = {
   paper: "#F7EFE3",
   paperLine: "#EDE1CC",
@@ -21750,6 +21752,20 @@ const SECTIONS = [
     subtitle: "Un argomento spiegato a piccoli passi, con verifiche ed esercizi.",
     Icon: Ruler,
     color: "#A0672D"
+  },
+  {
+    id: "correttore",
+    title: "Correttore di compiti",
+    subtitle: "Fai una foto del compito: lo rivediamo insieme o lo correggo.",
+    Icon: CheckDoc,
+    color: "#5E6BB0"
+  },
+  {
+    id: "pomodoro",
+    title: "Timer pomodoro",
+    subtitle: "Studia a blocchi con pause regolari.",
+    Icon: Tomato,
+    color: "#D9534F"
   },
   {
     id: "dizionario",
@@ -23169,7 +23185,8 @@ const HOME_ROWS = [
   ["formulario", "flashcard"],
   ["mappe", "quiz"],
   ["interrogazione", "dizionario"],
-  ["matematica"]
+  ["matematica", "correttore"],
+  ["pomodoro"]
 ];
 function HomeCard({ section, wide, badgeColor, badgeBg, onSelect }) {
   return /* @__PURE__ */ React.createElement(
@@ -24014,8 +24031,8 @@ Spiega il termine: "${term}"`,
 }
 const VIDEO_LOCAL_KEY = "chiarostudio-video";
 const VIDEO_WORKER_OLD = "Per i video va aggiornato il Worker su Cloudflare (chiedi al tutor).";
-function videoKeyFor(topic) {
-  return `video:${normalizeTopic(topic)}`;
+function videoKeyFor(topic, durata) {
+  return durata ? `video:${durata}:${normalizeTopic(topic)}` : `video:${normalizeTopic(topic)}`;
 }
 function loadVideoLocal() {
   try {
@@ -24041,9 +24058,9 @@ function parseYoutubeId(url) {
   const m = t.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|live\/)|youtu\.be\/|youtube-nocookie\.com\/embed\/)([A-Za-z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-async function findTopicVideo(topic) {
+async function findTopicVideo(topic, durata) {
   if (isBlockedText(topic)) throw new Error(BLOCKED_MESSAGE);
-  const key = videoKeyFor(topic);
+  const key = videoKeyFor(topic, durata);
   const local = loadVideoLocal()[key];
   if (local) return local;
   const shared = await sharedCacheGet(key);
@@ -24061,7 +24078,7 @@ async function findTopicVideo(topic) {
   const res = await chiaroApiFetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} },
-    body: JSON.stringify({ type: "video_search", topic })
+    body: JSON.stringify({ type: "video_search", topic, durata })
   });
   let data = {};
   try {
@@ -24081,33 +24098,48 @@ async function findTopicVideo(topic) {
 function TopicVideoBox({ topic, color, state, onState }) {
   const h = React.createElement;
   const st = state || { status: "idle" };
-  const key = videoKeyFor(topic);
-  const search = async () => {
-    onState({ status: "loading" });
+  const durata = st.durata || null;
+  const key = videoKeyFor(topic, durata);
+  const search = async (d) => {
+    onState({ status: "loading", durata: d });
     try {
-      const entry = await findTopicVideo(topic);
-      onState({ status: "done", entry });
+      const entry = await findTopicVideo(topic, d);
+      onState({ status: "done", entry, durata: d });
     } catch (e) {
-      onState({ status: "error", error: e.message || "Non sono riuscito a cercare il video." });
+      onState({ status: "error", durata: d, error: e.message || "Non sono riuscito a cercare il video." });
     }
   };
   const card = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, marginBottom: 16 };
+  const choiceBtn = (d) => h(
+    "button",
+    { key: d, onClick: () => search(d), "data-video-durata": d, style: { flex: "1 1 180px", textAlign: "left", padding: "12px 14px", borderRadius: 14, border: `2px solid ${color}`, background: d === "breve" ? C.card : color, color: d === "breve" ? C.ink : "#FBFAF4", cursor: "pointer", fontFamily: FONT } },
+    h("div", { style: { fontWeight: 700 } }, "▶ ", VIDEO_DURATE[d].icon, " ", VIDEO_DURATE[d].label),
+    h("div", { style: { fontSize: "calc(0.8em * var(--fs))", opacity: 0.85, marginTop: 2 } }, VIDEO_DURATE[d].hint)
+  );
+  const other = durata === "breve" ? "lungo" : durata === "lungo" ? "breve" : null;
+  const otherLink = other && h("button", { onClick: () => search(other), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, `Cerca invece il ${VIDEO_DURATE[other].label.toLowerCase()}`);
   if (st.status === "idle") {
-    return h("div", { style: { ...card, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } }, h("div", { style: { flex: "1 1 220px", color: C.inkSoft, fontSize: "calc(0.9em * var(--fs))", lineHeight: 1.45 } }, h("strong", { style: { color: C.ink } }, "Vuoi vederlo spiegato in un video? "), "Cerco su YouTube un video adatto su \xAB", topic, "\xBB."), h("button", { onClick: search, style: { ...secondaryBtnStyle, background: "#C4302B", color: "#FFF", borderColor: "#C4302B" } }, "▶ Trova un video"));
+    return h(
+      "div",
+      { style: card },
+      h("div", { style: { color: C.inkSoft, fontSize: "calc(0.9em * var(--fs))", lineHeight: 1.45, marginBottom: 10 } }, h("strong", { style: { color: C.ink } }, "Un video su YouTube. "), "Scegli prima che tipo di video vuoi:"),
+      h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } }, choiceBtn("breve"), choiceBtn("lungo"))
+    );
   }
   if (st.status === "loading") {
-    return h("div", { style: { ...card, color: C.inkSoft } }, h(Loader2, { size: 15, className: "chiaro-spin", style: { verticalAlign: "-2px", marginRight: 6 } }), "Cerco un video adatto su YouTube… (pu\xF2 volerci qualche secondo)");
+    return h("div", { style: { ...card, color: C.inkSoft } }, h(Loader2, { size: 15, className: "chiaro-spin", style: { verticalAlign: "-2px", marginRight: 6 } }), `Cerco un ${durata ? VIDEO_DURATE[durata].label.toLowerCase() : "video"} adatto su YouTube… (pu\xF2 volerci qualche secondo)`);
   }
   if (st.status === "error") {
-    return h("div", { style: { ...card } }, h("p", { style: { color: C.wine, margin: "0 0 10px" } }, st.error), h("button", { onClick: search, style: secondaryBtnStyle }, "Riprova"));
+    return h("div", { style: { ...card } }, h("p", { style: { color: C.wine, margin: "0 0 10px" } }, st.error), h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, h("button", { onClick: () => search(durata || "breve"), style: secondaryBtnStyle }, "Riprova"), otherLink));
   }
   const e = st.entry || {};
   if (!e.videoId) {
-    return h("div", { style: { ...card, color: C.inkSoft } }, "Non ho trovato un video adatto su questo argomento.");
+    return h("div", { style: { ...card, color: C.inkSoft } }, h("p", { style: { margin: "0 0 10px" } }, `Non ho trovato un ${durata ? VIDEO_DURATE[durata].label.toLowerCase() : "video"} adatto su questo argomento.`), otherLink);
   }
   return h(
     "div",
     { style: card },
+    durata && h("div", { style: { fontWeight: 700, color, marginBottom: 8, fontSize: "calc(0.85em * var(--fs))" } }, VIDEO_DURATE[durata].icon, " ", VIDEO_DURATE[durata].label, " \xB7 ", VIDEO_DURATE[durata].hint),
     h("div", { style: { position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 12, overflow: "hidden", background: "#000" } }, h("iframe", {
       src: `https://www.youtube-nocookie.com/embed/${e.videoId}?rel=0&modestbranding=1&playsinline=1`,
       title: e.title || "Video su YouTube",
@@ -24118,13 +24150,19 @@ function TopicVideoBox({ topic, color, state, onState }) {
     })),
     h("div", { style: { marginTop: 10, fontWeight: 700, color: C.ink, lineHeight: 1.35 } }, e.title || "Video su YouTube"),
     e.channel && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", marginTop: 2 } }, e.channel),
-    h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "flex-start" } }, h("a", { href: `https://www.youtube.com/watch?v=${e.videoId}`, target: "_blank", rel: "noopener noreferrer", style: { ...secondaryBtnStyle, textDecoration: "none", color } }, "Apri su YouTube ↗"), h(ReportBox, {
-      kind: "video",
-      topic,
-      cacheKey: key,
-      content: `https://www.youtube.com/watch?v=${e.videoId}${e.title ? " — " + e.title : ""}`,
-      onForgetLocal: (k) => saveVideoLocal(k, null)
-    })),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "flex-start" } },
+      h("a", { href: `https://www.youtube.com/watch?v=${e.videoId}`, target: "_blank", rel: "noopener noreferrer", style: { ...secondaryBtnStyle, textDecoration: "none", padding: "6px 11px" } }, "Apri su YouTube ↗"),
+      otherLink,
+      h(ReportBox, {
+        kind: "video",
+        topic,
+        cacheKey: key,
+        content: `https://www.youtube.com/watch?v=${e.videoId}${e.title ? " — " + e.title : ""}`,
+        onForgetLocal: (k) => saveVideoLocal(k, null)
+      })
+    ),
     h("p", { style: { color: C.inkSoft, fontSize: "calc(0.75em * var(--fs))", margin: "8px 0 0" } }, "Video scelto automaticamente e uguale per tutti su questo argomento. Se non va bene, segnalalo.")
   );
 }
@@ -24418,7 +24456,7 @@ function SimpleGenScreen({ sectionId, title, subtitle, color, systemPrompt, plac
         style: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 16 },
         dangerouslySetInnerHTML: { __html: diagram }
       }
-    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, onClickCapture: handleDictClick, className: [dictMode ? "chiaro-dict-on" : "", easyRead ? "chiaro-easy" : ""].join(" ").trim() || void 0, style: { background: C.card, border: `1.5px solid ${dictMode ? C.wine : C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16, cursor: dictMode ? "help" : void 0 } }, /* @__PURE__ */ React.createElement("style", null, EASY_READ_CSS), dictMode && /* @__PURE__ */ React.createElement("style", null, ".chiaro-dict-on *{cursor:help!important}"), /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(HighlightBar, { containerRef: textRef, highlights, onChange: setHighlights }), /* @__PURE__ */ React.createElement("div", { ref: textRef, onClickCapture: handleDictClick, className: [dictMode ? "chiaro-dict-on" : "", easyRead ? "chiaro-easy" : ""].join(" ").trim() || void 0, style: { background: C.card, border: `1.5px solid ${dictMode ? C.wine : C.border}`, borderRadius: 16, padding: 22, color: C.ink, lineHeight: 1.65, marginBottom: 16, cursor: dictMode ? "help" : void 0 } }, /* @__PURE__ */ React.createElement(SideSpeak, { text: startLineIndex !== null ? speechSliceFrom(result, startLineIndex, paragraphMode) : result, color, label: startLineIndex !== null ? paragraphMode === "continua" ? "Ascolta da qui" : "Ascolta il paragrafo" : "Ascolta" }), /* @__PURE__ */ React.createElement("style", null, EASY_READ_CSS), dictMode && /* @__PURE__ */ React.createElement("style", null, ".chiaro-dict-on *{cursor:help!important}"), /* @__PURE__ */ React.createElement(
       FormattedText,
       {
         highlights,
@@ -24487,7 +24525,7 @@ function parseDizionarioJson(raw) {
     return { voce: raw, alternative: [] };
   }
 }
-function DizionarioWebScreen({ onSave }) {
+function DizionarioParoleScreen({ onSave }) {
   const [lingua, setLingua] = useState("Latino");
   const [word, setWord] = useState("");
   const [status, setStatus] = useState("input");
@@ -24518,6 +24556,7 @@ function DizionarioWebScreen({ onSave }) {
       setAlternative(cached.alternative || []);
       setCacheSource("personal");
       setStatus("result");
+      addDizHistory({ tipo: "parola", lingua, parola: termine });
       return;
     }
     setStatus("loading");
@@ -24529,6 +24568,7 @@ function DizionarioWebScreen({ onSave }) {
         setAlternative(parsed.alternative || []);
         setCacheSource("condivisa");
         setStatus("result");
+      addDizHistory({ tipo: "parola", lingua, parola: termine });
         const nextPersonal = { ...topicCache, [cacheKey]: parsed };
         setTopicCache(nextPersonal);
         saveTopicCache(nextPersonal);
@@ -24557,6 +24597,7 @@ Nel campo "alternative" (array, pu\xF2 essere vuoto) elenca SOLO se la forma scr
       setVoce(parsed.voce);
       setAlternative(parsed.alternative);
       setStatus("result");
+      addDizHistory({ tipo: "parola", lingua, parola: termine });
       const nextPersonal = { ...topicCache, [cacheKey]: parsed };
       setTopicCache(nextPersonal);
       saveTopicCache(nextPersonal);
@@ -24566,7 +24607,7 @@ Nel campo "alternative" (array, pu\xF2 essere vuoto) elenca SOLO se la forma scr
       setStatus("input");
     }
   };
-  return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ React.createElement(PageHeader, { title: "Dizionario", subtitle: "Latino, greco, spagnolo, francese e inglese: parola, lemma e significato." }), error && /* @__PURE__ */ React.createElement(ErrorBanner, { text: error }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, ["Latino", "Greco", "Spagnolo", "Francese", "Inglese"].map((l) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640 } }, /* @__PURE__ */ null, error && /* @__PURE__ */ React.createElement(ErrorBanner, { text: error }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } }, ["Latino", "Greco", "Spagnolo", "Francese", "Inglese"].map((l) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: l,
@@ -24668,10 +24709,18 @@ function parseSavedDeck(content) {
   }
   return null;
 }
-function ArchivioWebScreen({ items, onDelete, onOpenFlashcards, onOpenText, onOpenLesson }) {
+function ArchivioWebScreen({ items, onDelete, onOpenFlashcards, onOpenText, onOpenLesson, onOpenCorrection, onOpenNotes }) {
   const [filtro, setFiltro] = useState("tutti");
   const [viewing, setViewing] = useState(null);
   const openItem = (item) => {
+    if (item.type === "appunti" && onOpenNotes) {
+      onOpenNotes(item);
+      return;
+    }
+    if (item.type === "correzione" && onOpenCorrection) {
+      onOpenCorrection(item);
+      return;
+    }
     if (item.type === "matematica" && onOpenLesson) {
       onOpenLesson(item);
       return;
@@ -24707,7 +24756,7 @@ function ArchivioWebScreen({ items, onDelete, onOpenFlashcards, onOpenText, onOp
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 6, fontSize: "calc(0.95em * var(--fs))" } }, item.title),
     /* @__PURE__ */ React.createElement("div", { style: { color: C.inkSoft, fontSize: "calc(0.78em * var(--fs))", textTransform: "capitalize" } }, item.type)
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => openItem(item), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, item.type === "flashcard" ? "Rifai il test" : item.type === "riassunto" ? "Riapri" : "Apri"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina"))))), viewing && /* @__PURE__ */ React.createElement(ArchivioViewerModal, { item: viewing, onClose: () => setViewing(null) }));
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => openItem(item), style: { ...secondaryBtnStyle, padding: "6px 11px" } }, item.type === "flashcard" ? "Rifai il test" : item.type === "riassunto" ? "Riapri" : "Apri"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(item.id), style: { ...secondaryBtnStyle, color: C.wine, borderColor: C.wine, padding: "6px 11px" } }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }), " Elimina"), /* @__PURE__ */ React.createElement(ExportButton, { label: "\u{1F4E4} Drive", style: { padding: "6px 11px" }, getFile: () => exportArchiveItem(item) }))))), viewing && /* @__PURE__ */ React.createElement(ArchivioViewerModal, { item: viewing, onClose: () => setViewing(null) }));
 }
 function parseFlashcardJson(raw) {
   const cleaned = raw.replace(/```json|```/g, "").trim();
@@ -25463,7 +25512,7 @@ const SHAPES = [
 ];
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const MAP_SIZE_KEY = "chiarostudio-mappa-dimensione";
-const MAP_ZOOM_MIN = 0.5;
+const MAP_ZOOM_MIN = 0.3;
 const MAP_ZOOM_MAX = 3;
 function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const h = React.createElement;
@@ -25500,6 +25549,12 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const panRef = useRef({ x: 0, y: 0 });
   const boxRef = useRef(box);
   boxRef.current = box;
+  // la mappa non ha più bordi fissi: i palloncini possono andare ben oltre il riquadro
+  const WORLD_MIN = -200;
+  const WORLD_MAX = 300;
+  const branchesRef = useRef(branches);
+  branchesRef.current = branches;
+  const autoPanRef = useRef({ active: false, raf: null, x: 0, y: 0, id: null });
   const ptrsRef = useRef(new Map());
   const panDragRef = useRef(null);
   const [resizingId, setResizingId] = useState(null);
@@ -25534,11 +25589,23 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const clampPan = (p, z) => {
     const bw = boxRef.current.w || 600;
     const bh = boxRef.current.h || 480;
-    const mx = bw * 0.5;
-    const my = bh * 0.5;
+    let minX = 50, maxX = 50, minY = 50, maxY = 50;
+    (branchesRef.current || []).forEach((b) => {
+      minX = Math.min(minX, b.x);
+      maxX = Math.max(maxX, b.x);
+      minY = Math.min(minY, b.y);
+      maxY = Math.max(maxY, b.y);
+    });
+    const W = bw * z;
+    const H = bh * z;
+    const M = 160;
+    const left = minX / 100 * W - M;
+    const right = maxX / 100 * W + M;
+    const top = minY / 100 * H - M;
+    const bottom = maxY / 100 * H + M;
     return {
-      x: clamp(p.x, Math.min(bw - bw * z - mx, mx), mx),
-      y: clamp(p.y, Math.min(bh - bh * z - my, my), my)
+      x: clamp(p.x, Math.min(bw * 0.5 - right, bw * 0.5 - left), bw * 0.5 - left),
+      y: clamp(p.y, Math.min(bh * 0.5 - bottom, bh * 0.5 - top), bh * 0.5 - top)
     };
   };
   const applyView = (z, p) => {
@@ -25566,6 +25633,24 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     applyView(z, { x: px - wx * z, y: py - wy * z });
   };
   const resetView = () => applyView(1, { x: 0, y: 0 });
+  // inquadra tutti i palloncini
+  const fitAll = () => {
+    const bw = boxRef.current.w || 600;
+    const bh = boxRef.current.h || 480;
+    let minX = 50, maxX = 50, minY = 50, maxY = 50;
+    branchesRef.current.forEach((b) => {
+      minX = Math.min(minX, b.x);
+      maxX = Math.max(maxX, b.x);
+      minY = Math.min(minY, b.y);
+      maxY = Math.max(maxY, b.y);
+    });
+    const spanX = (maxX - minX) / 100 * bw + 200;
+    const spanY = (maxY - minY) / 100 * bh + 140;
+    const z = clamp(Math.floor(Math.min(bw / spanX, bh / spanY, 1.2) * 100) / 100, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
+    const cx = (minX + maxX) / 2 / 100 * bw * z;
+    const cy = (minY + maxY) / 2 / 100 * bh * z;
+    applyView(z, { x: bw / 2 - cx, y: bh / 2 - cy });
+  };
 
   // ctrl + rotellina / pizzico sul trackpad del computer
   useEffect(() => {
@@ -25584,6 +25669,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   // un dito sullo sfondo = sposta la mappa; due dita = zoom (e spostamento)
   const twoPointers = () => [...ptrsRef.current.values()].slice(0, 2);
   const startPinch = () => {
+    stopAutoPan();
     const vp = viewportRef.current;
     if (!vp) return;
     const [a, b2] = twoPointers();
@@ -25631,8 +25717,8 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     }
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = clamp((clientX - rect.left) / rect.width * 100, 8, 92);
-    const y = clamp((clientY - rect.top) / rect.height * 100, 8, 92);
+    const x = clamp((clientX - rect.left) / rect.width * 100, WORLD_MIN, WORLD_MAX);
+    const y = clamp((clientY - rect.top) / rect.height * 100, WORLD_MIN, WORLD_MAX);
     const now = Date.now();
     const last = lastTapRef.current;
     const isDoubleTap = now - last.time < 450 && Math.abs(clientX - last.x) < 40 && Math.abs(clientY - last.y) < 40;
@@ -25782,8 +25868,8 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
       dy = Math.sin(angle);
       d = 1;
     }
-    const newX = clamp(target.x + dx / d * OFFSET_DISTANCE, 6, 94);
-    const newY = clamp(target.y + dy / d * OFFSET_DISTANCE, 6, 94);
+    const newX = clamp(target.x + dx / d * OFFSET_DISTANCE, WORLD_MIN, WORLD_MAX);
+    const newY = clamp(target.y + dy / d * OFFSET_DISTANCE, WORLD_MIN, WORLD_MAX);
     setEdges((prev) => {
       const filtered = prev.filter((e) => e.a !== draggedId && e.b !== draggedId);
       return [...filtered, { id: `e-${Date.now()}-${Math.random()}`, a: draggedId, b: targetId }];
@@ -25791,12 +25877,49 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     setBranches((prev) => prev.map((b) => b.id === draggedId ? { ...b, x: newX, y: newY } : b));
   };
   const movePalloncino = (id, clientX, clientY) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = clamp((clientX - rect.left) / rect.width * 100, 6, 94);
-    const y = clamp((clientY - rect.top) / rect.height * 100, 6, 94);
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const r = vp.getBoundingClientRect();
+    const W = (boxRef.current.w || 600) * zoomRef.current;
+    const H = (boxRef.current.h || 480) * zoomRef.current;
+    const x = clamp((clientX - r.left - panRef.current.x) / W * 100, WORLD_MIN, WORLD_MAX);
+    const y = clamp((clientY - r.top - panRef.current.y) / H * 100, WORLD_MIN, WORLD_MAX);
     setBranches((prev) => prev.map((b) => b.id === id ? { ...b, x, y } : b));
     if (!collegaMode) setHoverTargetId(nearestNodeId(id, x, y));
   };
+  // trascinando un palloncino vicino al bordo, la mappa scorre da sola
+  const autoPanTick = () => {
+    const ap = autoPanRef.current;
+    if (!ap.active || pinchingRef.current) {
+      ap.raf = null;
+      return;
+    }
+    const vp = viewportRef.current;
+    if (vp) {
+      const r = vp.getBoundingClientRect();
+      const E = 44;
+      const S = 9;
+      const vx = ap.x < r.left + E ? S : ap.x > r.right - E ? -S : 0;
+      const vy = ap.y < r.top + E ? S : ap.y > r.bottom - E ? -S : 0;
+      if (vx || vy) {
+        applyView(zoomRef.current, { x: panRef.current.x + vx, y: panRef.current.y + vy });
+        movePalloncino(ap.id, ap.x - ap.ox, ap.y - ap.oy);
+      }
+    }
+    ap.raf = requestAnimationFrame(autoPanTick);
+  };
+  const startAutoPan = (id, x, y, ox, oy) => {
+    const ap = autoPanRef.current;
+    Object.assign(ap, { active: true, id, x, y, ox, oy });
+    if (!ap.raf) ap.raf = requestAnimationFrame(autoPanTick);
+  };
+  const stopAutoPan = () => {
+    const ap = autoPanRef.current;
+    ap.active = false;
+    if (ap.raf) cancelAnimationFrame(ap.raf);
+    ap.raf = null;
+  };
+  useEffect(() => stopAutoPan, []);
   const handleNodeTap = (id) => {
     if (collegaMode) {
       setConnectFrom((prev) => {
@@ -25880,7 +26003,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
   const centerSize = (editingCenter ? Math.max(170, 108 * Math.max(mz, 1)) : 108 * mz);
   const shiftX = (x) => x < 22 ? "-18%" : x > 78 ? "-82%" : "-50%";
 
-  const toolbar = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } }, h(SpeakButton, { text: readAloudText(), color: C.blue, label: "Ascolta" }), h(SaveButton, { color: C.blue, onSave: () => onSave({ topic, branches, edges }) }), h(
+  const toolbar = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } }, h(SpeakButton, { text: readAloudText(), color: C.blue, label: "Ascolta" }), h(SaveButton, { color: C.blue, onSave: () => onSave({ topic, branches, edges }) }), h(ExportButton, { label: "\u{1F4E4} Drive / Stampa", getFile: async () => shareOrDownloadFile(await mapToPngBlob({ topic, branches, edges }), safeFileName("Mappa " + (topic || "")) + ".png", topic) }), h(
     "button",
     {
       onClick: () => {
@@ -25893,7 +26016,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
     },
     h(Link2, { size: 14 }),
     " Collega"
-  ), h("div", { style: { display: "flex", gap: 4, alignItems: "center" } }, h("button", { onClick: () => zoomAround(zoom / 1.25), "aria-label": "Riduci la mappa", disabled: zoom <= MAP_ZOOM_MIN, style: zoomBtn }, "−"), h("button", { onClick: resetView, "aria-label": "Zoom normale", style: { ...zoomBtn, minWidth: 58 } }, `${Math.round(zoom * 100)}%`), h("button", { onClick: () => zoomAround(zoom * 1.25), "aria-label": "Ingrandisci la mappa", disabled: zoom >= MAP_ZOOM_MAX, style: zoomBtn }, "+")), h(
+  ), h("div", { style: { display: "flex", gap: 4, alignItems: "center" } }, h("button", { onClick: () => zoomAround(zoom / 1.25), "aria-label": "Riduci la mappa", disabled: zoom <= MAP_ZOOM_MIN, style: zoomBtn }, "−"), h("button", { onClick: resetView, "aria-label": "Zoom normale", style: { ...zoomBtn, minWidth: 58 } }, `${Math.round(zoom * 100)}%`), h("button", { onClick: () => zoomAround(zoom * 1.25), "aria-label": "Ingrandisci la mappa", disabled: zoom >= MAP_ZOOM_MAX, style: zoomBtn }, "+"), h("button", { onClick: fitAll, "aria-label": "Mostra tutta la mappa", title: "Mostra tutta la mappa", style: { ...zoomBtn, minWidth: 0, padding: "0 10px" } }, "\u2922 Tutta")), h(
     "button",
     {
       onClick: () => {
@@ -26097,10 +26220,14 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
             dragInfoRef.current.moved = true;
             clearTimeout(longPressRef.current);
           }
-          if (dragInfoRef.current.moved) movePalloncino(b.id, e.clientX - (dragInfoRef.current.ox || 0), e.clientY - (dragInfoRef.current.oy || 0));
+          if (dragInfoRef.current.moved) {
+            movePalloncino(b.id, e.clientX - (dragInfoRef.current.ox || 0), e.clientY - (dragInfoRef.current.oy || 0));
+            startAutoPan(b.id, e.clientX, e.clientY, dragInfoRef.current.ox || 0, dragInfoRef.current.oy || 0);
+          }
         },
         onPointerUp: () => {
           clearTimeout(longPressRef.current);
+          stopAutoPan();
           if (resizeRef.current && resizeRef.current.id === b.id) {
             resizeRef.current = null;
             dragInfoRef.current.id = null;
@@ -26124,6 +26251,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         },
         onPointerCancel: () => {
           clearTimeout(longPressRef.current);
+          stopAutoPan();
           dragInfoRef.current.id = null;
           resizeRef.current = null;
           setResizingId(null);
@@ -26275,7 +26403,7 @@ function MappaWebScreen({ initialData, onSave, embedded, onDataChange }) {
         {
           viewBox: "0 0 100 100",
           preserveAspectRatio: "none",
-          style: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }
+          style: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }
         },
         edges.map((e) => {
           const p1 = posOf(e.a);
@@ -27513,6 +27641,1305 @@ function MatematicaScreen({ onSave, initialState, onStateChange, archivio = [] }
   );
   return h(MateVarsContext.Provider, { value: varIndex }, body);
 }
+const CORR_COLOR = "#5E6BB0";
+const CORR_MATERIE = ["Riconosci tu", "Italiano", "Matematica", "Latino", "Inglese", "Scienze", "Storia/Geografia", "Altro"];
+const CORR_SYSTEM = `Sei un insegnante paziente che corregge i compiti di studenti con DSA (11-18 anni). Ricevi la FOTO di un compito svolto a mano o stampato (grammatica, latino, inglese, matematica, scienze...). Prima leggi con attenzione la consegna e le risposte dello studente, poi correggi ogni punto.
+
+Per OGNI esercizio o domanda (o riga, se \xE8 un elenco) prepara:
+- "numero": come \xE8 indicato nel compito (es. "1", "2b", "riga 3"), oppure un numero progressivo;
+- "consegna": in breve cosa chiedeva quel punto;
+- "risposta_studente": cosa ha scritto lo studente, trascritto fedelmente (anche gli errori);
+- "esito": "giusto", "errore", "incompleto" oppure "illeggibile";
+- "indizio": SOLO per errore/incompleto: un suggerimento che aiuta lo studente a trovare da solo l'errore SENZA dire la risposta giusta e SENZA dire esattamente cosa \xE8 sbagliato (es. "Rileggi il soggetto: \xE8 singolare o plurale? Il verbo deve accordarsi."; "Controlla il segno quando sposti il 5 dall'altra parte dell'uguale.");
+- "indizio2": un secondo suggerimento pi\xF9 preciso, ma che ancora non dice la soluzione;
+- "errore": dove sta esattamente l'errore e che tipo di errore \xE8 (es. "hai scritto 'rosae' ma serve l'accusativo plurale");
+- "soluzione": la risposta corretta;
+- "spiegazione": perch\xE9 la soluzione \xE8 quella, in modo semplice e passo per passo se serve (puoi usare "- " per i passaggi e **grassetto** per le parole chiave).
+Per i punti giusti lascia vuoti indizio, indizio2 ed errore, e in "spiegazione" scrivi in una frase perch\xE9 va bene.
+
+Regole:
+- Frasi brevi, parole semplici, tono gentile e incoraggiante. Mai ironia, mai giudizi sulla persona.
+- Non segnare come errore la calligrafia o piccole sviste di ortografia se l'esercizio non riguarda l'ortografia: al massimo segnalale con gentilezza.
+- Se una parte della foto non si legge, mettila come "illeggibile" e non inventare.
+- Simboli normali (\xB2 √ π \xB7), niente LaTeX.
+- "leggibilita": "buona", "parziale" o "scarsa" (scarsa = non riesci a correggere quasi nulla).
+- "commento": 1-2 frasi di incoraggiamento finale, concrete (cosa ha fatto bene e su cosa concentrarsi).
+- Se nella foto non c'\xE8 un compito scolastico, rispondi con "punti": [] e spiegalo nel commento.
+
+Rispondi SOLO con JSON valido:
+{"materia":"...","titolo":"breve titolo del compito","leggibilita":"buona","punti":[{"numero":"1","consegna":"...","risposta_studente":"...","esito":"errore","indizio":"...","indizio2":"...","errore":"...","soluzione":"...","spiegazione":"..."}],"commento":"..."}`;
+const CORR_RETRY_SYSTEM = `Sei un insegnante paziente che aiuta uno studente con DSA a correggere da solo un punto del suo compito. Ricevi la consegna, la risposta sbagliata iniziale, la soluzione corretta, la spiegazione e il NUOVO tentativo dello studente.
+- Accetta risposte equivalenti (sinonimi corretti, forme equivalenti, ordine diverso se ammesso).
+- Se il nuovo tentativo \xE8 giusto: "esito":"giusto" e complimentati in una frase dicendo perch\xE9 ora va bene.
+- Se \xE8 quasi giusto: "esito":"quasi" e indica cosa manca SENZA dare la soluzione.
+- Se \xE8 ancora sbagliato: "esito":"sbagliato" e dai un nuovo suggerimento diverso dai precedenti, SENZA dire la soluzione.
+Frasi brevi e gentili. Rispondi SOLO con JSON: {"esito":"giusto"|"quasi"|"sbagliato","messaggio":"..."}`;
+function normalizeCorrection(obj) {
+  if (!obj || typeof obj !== "object") throw new Error("json");
+  const esiti = ["giusto", "errore", "incompleto", "illeggibile"];
+  const punti = (Array.isArray(obj.punti) ? obj.punti : []).map((p, i) => ({
+    numero: String(p && p.numero || i + 1),
+    consegna: String(p && p.consegna || ""),
+    risposta_studente: String(p && p.risposta_studente || ""),
+    esito: esiti.includes(p && p.esito) ? p.esito : "errore",
+    indizio: String(p && p.indizio || ""),
+    indizio2: String(p && p.indizio2 || ""),
+    errore: String(p && p.errore || ""),
+    soluzione: String(p && p.soluzione || ""),
+    spiegazione: String(p && p.spiegazione || "")
+  }));
+  return {
+    materia: String(obj.materia || ""),
+    titolo: String(obj.titolo || "Compito"),
+    leggibilita: ["buona", "parziale", "scarsa"].includes(obj.leggibilita) ? obj.leggibilita : "buona",
+    punti,
+    commento: String(obj.commento || "")
+  };
+}
+function makeThumb(dataUrl, maxDim = 520) {
+  return new Promise((resolve) => {
+    try {
+      const img = new window.Image();
+      img.onload = () => {
+        const k = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * k);
+        c.height = Math.round(img.height * k);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.7));
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+function CorrettoreScreen({ onSave, initialState, onStateChange }) {
+  const h = React.createElement;
+  const init = initialState || {};
+  const [image, setImage] = useState(init.image || null);
+  const [thumb, setThumb] = useState(init.thumb || null);
+  const [materia, setMateria] = useState(init.materia || CORR_MATERIE[0]);
+  const [nota, setNota] = useState(init.nota || "");
+  const [status, setStatus] = useState(init.status || "input");
+  const [error, setError] = useState(init.error || "");
+  const [result, setResult] = useState(init.result || null);
+  const [mode, setMode] = useState(init.mode || null);
+  const [items, setItems] = useState(init.items || {});
+  const [savedId, setSavedId] = useState(init.savedId || null);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [imgError, setImgError] = useState("");
+  const [easyRead, setEasyRead] = usePref(EASY_READ_KEY, false);
+  useEffect(() => {
+    if (onStateChange) onStateChange({ image, thumb, materia, nota, status: status === "loading" ? "input" : status, error, result, mode, items, savedId });
+  }, [image, thumb, materia, nota, status, error, result, mode, items, savedId]);
+  const pick = async (file) => {
+    setImgError("");
+    try {
+      const img = await fileToCompressedImage(file, 2e3, 0.85);
+      setImage(img);
+      setThumb(await makeThumb(img.previewUrl));
+    } catch (e) {
+      setImgError(e.message || "Non riesco a leggere la foto.");
+    }
+  };
+  const correct = async (chosenMode) => {
+    if (!image) return;
+    setMode(chosenMode);
+    setStatus("loading");
+    setError("");
+    try {
+      let parsed = null;
+      let lastErr = null;
+      for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+        try {
+          const raw = await callClaude({
+            system: CORR_SYSTEM,
+            userText: `Materia: ${materia === CORR_MATERIE[0] ? "riconoscila tu" : materia}${nota.trim() ? `
+Nota dello studente sulla consegna: ${nota.trim()}` : ""}
+Correggi il compito nella foto.`,
+            image,
+            maxTokens: 5e3
+          });
+          parsed = normalizeCorrection(parseJsonLoose(raw));
+        } catch (e) {
+          lastErr = e;
+          if (!(e instanceof SyntaxError) && e.message !== "json") throw e;
+        }
+      }
+      if (!parsed) throw lastErr || new Error("json");
+      setResult(parsed);
+      setItems({});
+      setSavedId(null);
+      setStatus("result");
+    } catch (e) {
+      setError(e && e.message && e.message !== "json" ? e.message : "Non sono riuscito a correggere il compito. Riprova, magari con una foto pi\xF9 nitida.");
+      setStatus("input");
+    }
+  };
+  const reset = () => {
+    setImage(null);
+    setThumb(null);
+    setNota("");
+    setResult(null);
+    setMode(null);
+    setItems({});
+    setSavedId(null);
+    setStatus("input");
+    setError("");
+  };
+  const setItem = (i, patch) => setItems((prev) => ({ ...prev, [i]: { ...prev[i] || {}, ...patch } }));
+  const retry = async (i) => {
+    const p = result.punti[i];
+    const st = items[i] || {};
+    const ans = (st.answer || "").trim();
+    if (!ans) return;
+    setItem(i, { checking: true, checkError: "" });
+    try {
+      const raw = await callClaude({
+        system: CORR_RETRY_SYSTEM,
+        userText: `Materia: ${result.materia}
+Consegna: ${p.consegna}
+Risposta iniziale (sbagliata): ${p.risposta_studente}
+Soluzione corretta: ${p.soluzione}
+Spiegazione: ${p.spiegazione}
+Suggerimenti gi\xE0 dati: ${[p.indizio, st.hint2 ? p.indizio2 : ""].filter(Boolean).join(" / ")}
+
+Nuovo tentativo dello studente: ${ans}`,
+        maxTokens: 600
+      });
+      let r;
+      try {
+        r = parseJsonLoose(raw);
+      } catch {
+        r = { esito: "sbagliato", messaggio: raw };
+      }
+      const esito = ["giusto", "quasi", "sbagliato"].includes(r.esito) ? r.esito : "sbagliato";
+      setItem(i, { checking: false, feedback: { esito, messaggio: String(r.messaggio || "") }, fixed: esito === "giusto" || st.fixed });
+    } catch (e) {
+      setItem(i, { checking: false, checkError: e.message || "Non sono riuscito a controllare. Riprova." });
+    }
+  };
+  const save = () => {
+    if (!result) return;
+    const content = JSON.stringify({ v: 1, thumb, materia, nota, result, mode, items: Object.fromEntries(Object.entries(items).map(([k, v]) => [k, { ...v, checking: false }])) });
+    const id = onSave({ type: "correzione", title: `Correzione — ${result.titolo}`, content, materia: result.materia || materia }, savedId);
+    if (id) setSavedId(id);
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1800);
+  };
+  const card = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, marginBottom: 14 };
+  const small = { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", lineHeight: 1.45 };
+  const modeBtn = (id, emoji, title, desc) => h(
+    "button",
+    {
+      key: id,
+      onClick: () => correct(id),
+      disabled: !image || status === "loading",
+      "data-corr-mode": id,
+      style: { flex: "1 1 220px", textAlign: "left", padding: "16px 18px", borderRadius: 16, border: `2px solid ${CORR_COLOR}`, background: id === "direct" ? CORR_COLOR : C.card, color: id === "direct" ? "#FBFAF4" : C.ink, cursor: !image ? "not-allowed" : "pointer", opacity: !image ? 0.5 : 1, fontFamily: FONT }
+    },
+    h("div", { style: { fontWeight: 700, fontSize: "calc(1.02em * var(--fs))", marginBottom: 4 } }, emoji, " ", title),
+    h("div", { style: { fontSize: "calc(0.85em * var(--fs))", opacity: 0.9, lineHeight: 1.4 } }, desc)
+  );
+  if (status !== "result" || !result) {
+    const loading = status === "loading";
+    return h(
+      "div",
+      { style: { maxWidth: 680 } },
+      h(PageHeader, { title: "Correttore di compiti", subtitle: "Fai una foto del compito: lo rivediamo insieme o te lo correggo." }),
+      error && h(ErrorBanner, { text: error }),
+      imgError && h(ErrorBanner, { text: imgError }),
+      h(ImagePicker, { image, onPick: pick, onClear: () => {
+        setImage(null);
+        setThumb(null);
+      } }),
+      h("p", { style: { ...small, margin: "8px 0 16px" } }, "Consiglio: foto dritta, con buona luce, una pagina alla volta e tutta dentro l'inquadratura."),
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 14 } },
+        h("span", { style: { ...small, marginRight: 4 } }, "Materia:"),
+        CORR_MATERIE.map((m) => h("button", { key: m, onClick: () => setMateria(m), "aria-pressed": materia === m, style: { ...secondaryBtnStyle, padding: "6px 12px", background: materia === m ? CORR_COLOR : C.card, color: materia === m ? "#FBFAF4" : C.ink, borderColor: materia === m ? CORR_COLOR : C.border } }, m))
+      ),
+      h(
+        "div",
+        { style: { position: "relative", marginBottom: 18 } },
+        h("textarea", { value: nota, onChange: (e) => setNota(e.target.value), rows: 2, placeholder: "Facoltativo: scrivi la consegna se non si vede nella foto (es. \"metti i verbi al passato\")", "aria-label": "Consegna dell'esercizio", style: { ...textAreaStyle, minHeight: 70 } }),
+        h("div", { style: { position: "absolute", bottom: 10, right: 10 } }, h(DictateButton, { onResult: (r) => setNota((t) => t ? t + " " + r : r), color: CORR_COLOR }))
+      ),
+      loading ? h("div", { style: { ...card, display: "flex", gap: 10, alignItems: "center" } }, h(Loader2, { size: 18, className: "chiaro-spin" }), h("span", { style: { color: C.ink } }, "Sto leggendo e correggendo il compito… pu\xF2 volerci fino a un minuto.")) : h(
+        "div",
+        { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
+        modeBtn("hints", "\u{1F91D}", "Rivediamo assieme", "Ti dico dove guardare e ti do dei suggerimenti: la correzione la trovi tu."),
+        modeBtn("direct", "✍️", "Correzione diretta", "Ti mostro gli errori e ti spiego qual \xE8 la soluzione giusta.")
+      )
+    );
+  }
+  const punti = result.punti;
+  const wrongCount = punti.filter((p) => p.esito !== "giusto").length;
+  const fixedCount = punti.filter((p, i) => p.esito !== "giusto" && items[i] && items[i].fixed).length;
+  const tone = (esito) => esito === "giusto" ? { bg: "rgba(107,143,94,0.12)", bd: "rgba(107,143,94,0.5)", label: "✓ Giusto", col: C.moss } : esito === "illeggibile" ? { bg: "rgba(120,120,120,0.08)", bd: C.border, label: "? Non si legge", col: C.inkSoft } : esito === "incompleto" ? { bg: "rgba(232,168,116,0.14)", bd: "rgba(232,168,116,0.6)", label: mode === "hints" ? "Da completare" : "Incompleto", col: "#B3672B" } : { bg: "rgba(224,114,79,0.09)", bd: "rgba(224,114,79,0.45)", label: mode === "hints" ? "Da rivedere" : "Errore", col: C.wine };
+  const box = (bg, children, extra) => h("div", { style: { background: bg, borderRadius: 10, padding: "10px 12px", marginTop: 10, color: C.ink, lineHeight: 1.55, ...extra || {} } }, children);
+  const renderPunto = (p, i) => {
+    const st = items[i] || {};
+    const t = tone(st.fixed ? "giusto" : p.esito);
+    const showDirect = mode === "direct" || st.revealed;
+    const wrong = p.esito === "errore" || p.esito === "incompleto";
+    return h(
+      "div",
+      { key: i, "data-corr-item": i, style: { ...card, borderLeft: `5px solid ${t.bd}` } },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 } },
+        h("b", { style: { color: C.ink } }, `Punto ${p.numero}`),
+        h("span", { style: { background: t.bg, border: `1px solid ${t.bd}`, color: t.col, borderRadius: 999, padding: "2px 10px", fontWeight: 700, fontSize: "calc(0.8em * var(--fs))" } }, st.fixed && p.esito !== "giusto" ? "✓ Corretto da te!" : t.label),
+        h("span", { style: { flex: 1 } }),
+        h(MiniSpeak, { text: [p.consegna, "Hai scritto: " + p.risposta_studente, showDirect ? p.errore + ". " + p.soluzione + ". " + p.spiegazione : p.indizio].filter(Boolean).join("\n") })
+      ),
+      p.consegna && h("div", { style: { ...small, marginBottom: 6 } }, p.consegna),
+      p.risposta_studente && h("div", { style: { color: C.ink } }, h("span", { style: small }, "Hai scritto: "), h("span", { style: { fontWeight: 600, textDecoration: showDirect && wrong && !st.fixed ? `underline wavy ${C.wine}` : "none" } }, p.risposta_studente)),
+      p.esito === "giusto" && p.spiegazione && box("rgba(107,143,94,0.08)", h(FormattedText, { text: p.spiegazione, interactive: false })),
+      p.esito === "illeggibile" && box("rgba(120,120,120,0.06)", "Questa parte non si legge bene nella foto. Prova a rifarla pi\xF9 da vicino, oppure scrivi qui sotto cosa avevi risposto."),
+      wrong && !showDirect && h(
+        React.Fragment,
+        null,
+        box("rgba(94,107,176,0.08)", h(React.Fragment, null, h("b", null, "\u{1F4A1} Suggerimento: "), h(FormattedText, { text: p.indizio || "Rileggi con calma la consegna e la tua risposta.", interactive: false }))),
+        st.hint2 && p.indizio2 && box("rgba(94,107,176,0.12)", h(React.Fragment, null, h("b", null, "\u{1F4A1} Altro suggerimento: "), h(FormattedText, { text: p.indizio2, interactive: false })))
+      ),
+      wrong && showDirect && h(
+        React.Fragment,
+        null,
+        p.errore && box("rgba(224,114,79,0.09)", h(React.Fragment, null, h("b", null, "Dov'\xE8 l'errore: "), h(FormattedText, { text: p.errore, interactive: false }))),
+        box("rgba(107,143,94,0.1)", h(React.Fragment, null, h("b", null, "Soluzione: "), p.soluzione, p.spiegazione && h("div", { style: { marginTop: 6 } }, h(FormattedText, { text: p.spiegazione, interactive: false }))))
+      ),
+      (wrong || p.esito === "illeggibile") && !st.fixed && mode === "hints" && !st.revealed && h(
+        "div",
+        { style: { marginTop: 12 } },
+        h(
+          "div",
+          { style: { position: "relative" } },
+          h("textarea", { value: st.answer || "", onChange: (e) => setItem(i, { answer: e.target.value }), rows: 2, placeholder: "Riprova: scrivi qui la nuova risposta", "aria-label": `Nuova risposta al punto ${p.numero}`, style: { ...textAreaStyle, minHeight: 64 } }),
+          h("div", { style: { position: "absolute", bottom: 8, right: 8 } }, h(DictateButton, { onResult: (r) => setItem(i, { answer: st.answer ? st.answer + " " + r : r }), color: CORR_COLOR }))
+        ),
+        st.checkError && h("p", { style: { color: C.wine, margin: "6px 0 0" } }, st.checkError),
+        st.feedback && box(st.feedback.esito === "giusto" ? "rgba(107,143,94,0.12)" : st.feedback.esito === "quasi" ? "rgba(232,168,116,0.16)" : "rgba(224,114,79,0.09)", h(React.Fragment, null, h("b", null, st.feedback.esito === "giusto" ? "Bravo! " : st.feedback.esito === "quasi" ? "Quasi! " : "Non ancora. "), h(FormattedText, { text: st.feedback.messaggio, interactive: false }))),
+        h(
+          "div",
+          { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 } },
+          h("button", { onClick: () => retry(i), disabled: st.checking || !(st.answer || "").trim(), style: { ...secondaryBtnStyle, background: CORR_COLOR, borderColor: CORR_COLOR, color: "#FBFAF4", opacity: st.checking || !(st.answer || "").trim() ? 0.55 : 1 } }, st.checking ? "Controllo…" : "Controlla"),
+          wrong && p.indizio2 && !st.hint2 && h("button", { onClick: () => setItem(i, { hint2: true }), style: secondaryBtnStyle }, "\u{1F4A1} Un altro suggerimento"),
+          wrong && h("button", { onClick: () => setItem(i, { revealed: true }), style: secondaryBtnStyle }, "Mostrami la correzione")
+        )
+      ),
+      st.fixed && st.feedback && mode === "hints" && box("rgba(107,143,94,0.12)", h(React.Fragment, null, h("b", null, "Bravo! "), h(FormattedText, { text: st.feedback.messaggio, interactive: false }), h("div", { style: { marginTop: 4 } }, h("span", { style: small }, "La tua nuova risposta: "), h("b", null, st.answer))))
+    );
+  };
+  return h(
+    "div",
+    { style: { maxWidth: 760 } },
+    h("style", null, EASY_READ_CSS),
+    h(PageHeader, { title: result.titolo, subtitle: "Correttore di compiti" + (result.materia ? " \xB7 " + result.materia : "") }),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 } },
+      h("button", { onClick: reset, style: secondaryBtnStyle }, "← Nuovo compito"),
+      h(
+        "div",
+        { role: "group", "aria-label": "Modalit\xE0", style: { display: "inline-flex", border: `1.5px solid ${CORR_COLOR}`, borderRadius: 12, overflow: "hidden" } },
+        [["hints", "\u{1F91D} Rivediamo assieme"], ["direct", "✍️ Correzione diretta"]].map(([id, label]) => h("button", { key: id, onClick: () => setMode(id), "aria-pressed": mode === id, style: { border: "none", padding: "8px 12px", background: mode === id ? CORR_COLOR : C.card, color: mode === id ? "#FBFAF4" : C.ink, fontWeight: 700, fontFamily: FONT, cursor: "pointer", fontSize: "calc(0.85em * var(--fs))" } }, label))
+      ),
+      h("button", { onClick: () => setEasyRead(!easyRead), "aria-pressed": !!easyRead, style: { ...secondaryBtnStyle, background: easyRead ? C.ink : C.card, color: easyRead ? "#FBFAF4" : C.ink, borderColor: easyRead ? C.ink : C.border } }, "☰ Lettura facilitata"),
+      h("button", { onClick: save, style: { ...secondaryBtnStyle, background: savedFlash ? CORR_COLOR : C.card, color: savedFlash ? "#FBFAF4" : C.ink, borderColor: savedFlash ? CORR_COLOR : C.border } }, savedFlash ? "✓ Salvato" : savedId ? "\u{1F4BE} Salva i progressi" : "\u{1F4BE} Salva nell'archivio")
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 14 } },
+      (thumb || image) && h("img", { src: thumb || image.previewUrl, alt: "Foto del compito", style: { width: 140, maxHeight: 190, objectFit: "cover", borderRadius: 12, border: `1px solid ${C.border}` } }),
+      h(
+        "div",
+        { style: { ...card, flex: "1 1 260px", marginBottom: 0 } },
+        punti.length === 0 ? h("div", { style: { color: C.ink } }, "Non ho trovato esercizi da correggere in questa foto.") : wrongCount === 0 ? h("div", { style: { color: C.ink, fontWeight: 700 } }, "\u{1F389} Tutto giusto!") : h("div", { style: { color: C.ink } }, h("b", null, `${punti.length - wrongCount} su ${punti.length} giusti.`), mode === "hints" ? ` Ci sono ${wrongCount} punti da rivedere: leggi i suggerimenti e prova a correggerli da solo.` : ` Qui sotto trovi gli errori spiegati.`, fixedCount > 0 ? ` Ne hai gi\xE0 corretti ${fixedCount}!` : ""),
+        result.leggibilita !== "buona" && h("p", { style: { ...small, color: C.wine, margin: "8px 0 0" } }, result.leggibilita === "scarsa" ? "La foto si legge poco: prova a rifarla pi\xF9 nitida per una correzione completa." : "Alcune parti della foto non si leggono bene."),
+        result.commento && h("div", { style: { marginTop: 8, color: C.ink, display: "flex", gap: 8, alignItems: "flex-start" } }, h("div", { style: { flex: 1 } }, h(FormattedText, { text: result.commento, interactive: false })), h(MiniSpeak, { text: result.commento }))
+      )
+    ),
+    h("div", { className: easyRead ? "chiaro-easy" : void 0 }, punti.map(renderPunto))
+  );
+}
+const TRAD_LINGUE = [
+  { id: "Inglese", lang: "en-GB" },
+  { id: "Francese", lang: "fr-FR" },
+  { id: "Spagnolo", lang: "es-ES" },
+  { id: "Tedesco", lang: "de-DE" },
+  { id: "Latino", lang: "it-IT" },
+  { id: "Greco antico", lang: "el-GR" }
+];
+const TRAD_SYSTEM = `Sei un traduttore e insegnante di lingue per studenti con DSA (11-18 anni). Traduci la frase o il breve testo dalla lingua di partenza a quella di arrivo indicate, in modo corretto e naturale, al livello di uno studente.
+Poi aiuta lo studente a capire come si costruisce la frase, cos\xEC impara a farla da solo:
+- "traduzione": la traduzione;
+- "alternativa": se esiste, un altro modo comune di dirla (altrimenti "");
+- "parole": le parole o espressioni importanti, abbinate: [{"da":"...","a":"..."}] (massimo 8);
+- "come_si_costruisce": 2-5 punti brevi (con "- " a inizio riga) sulle regole usate: ordine delle parole, tempo verbale, accordi, casi (per il latino e il greco), false somiglianze da evitare;
+- "pronuncia": solo se la lingua di arrivo \xE8 inglese, francese, spagnolo o tedesco, una pronuncia semplificata "all'italiana" della traduzione (es. "ai ghou tu skuul"), altrimenti "".
+Frasi brevi e chiare. Se il testo contiene contenuti non adatti a minori non tradurli. Rispondi SOLO con JSON valido:
+{"traduzione":"...","alternativa":"","parole":[{"da":"...","a":"..."}],"come_si_costruisce":"- ...","pronuncia":""}`;
+function speakInLanguage(text, lang) {
+  try {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return false;
+    window.speechSynthesis.cancel();
+    const u = new window.SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+    const v = voices.find((x) => x.lang && x.lang.toLowerCase().replace("_", "-") === lang.toLowerCase()) || voices.find((x) => x.lang && x.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+    if (v) u.voice = v;
+    u.rate = 0.9;
+    window.speechSynthesis.speak(u);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function TraduttoreFrasi({ onSave }) {
+  const h = React.createElement;
+  const [lingua, setLingua] = useState("Inglese");
+  const [dallItaliano, setDallItaliano] = useState(true);
+  const [testo, setTesto] = useState("");
+  const [status, setStatus] = useState("input");
+  const [error, setError] = useState("");
+  const [res, setRes] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const langInfo = TRAD_LINGUE.find((l) => l.id === lingua) || TRAD_LINGUE[0];
+  const da = dallItaliano ? "Italiano" : lingua;
+  const a = dallItaliano ? lingua : "Italiano";
+  const traduci = async () => {
+    const t = testo.trim();
+    if (!t) return;
+    setStatus("loading");
+    setError("");
+    setSaved(false);
+    try {
+      const raw = await callClaude({ system: TRAD_SYSTEM, userText: `Lingua di partenza: ${da}
+Lingua di arrivo: ${a}
+Testo da tradurre:
+${t}`, maxTokens: 1200 });
+      let r;
+      try {
+        r = parseJsonLoose(raw);
+      } catch {
+        r = { traduzione: raw };
+      }
+      setRes({
+        da,
+        a,
+        testo: t,
+        traduzione: String(r.traduzione || ""),
+        alternativa: String(r.alternativa || ""),
+        parole: Array.isArray(r.parole) ? r.parole.filter((p) => p && p.da && p.a).slice(0, 8) : [],
+        come: String(r.come_si_costruisce || ""),
+        pronuncia: String(r.pronuncia || "")
+      });
+      setStatus("result");
+      const parole = Array.isArray(r.parole) ? r.parole.filter((p) => p && p.da && p.a).slice(0, 8) : [];
+      addDizHistory({ tipo: "frase", da, a, testo: t, res: { traduzione: String(r.traduzione || ""), alternativa: String(r.alternativa || ""), parole, come: String(r.come_si_costruisce || "") } });
+    } catch (e) {
+      setError(e && e.message || "Non sono riuscito a tradurre. Riprova.");
+      setStatus("input");
+    }
+  };
+  const card = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, marginBottom: 14 };
+  const small = { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))" };
+  const resLang = res && res.a !== "Italiano" ? (TRAD_LINGUE.find((l) => l.id === res.a) || {}).lang : "it-IT";
+  return h(
+    "div",
+    null,
+    error && h(ErrorBanner, { text: error }),
+    h(
+      "div",
+      { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 } },
+      TRAD_LINGUE.map((l) => h("button", { key: l.id, onClick: () => setLingua(l.id), "aria-pressed": lingua === l.id, style: { ...secondaryBtnStyle, background: lingua === l.id ? C.wine : C.card, color: lingua === l.id ? "#FBFAF4" : C.ink, borderColor: lingua === l.id ? C.wine : C.border } }, l.id))
+    ),
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+      h("span", { style: { fontWeight: 700, color: C.ink }, "data-trad-dir": `${da}>${a}` }, da),
+      h("button", { onClick: () => setDallItaliano(!dallItaliano), "aria-label": "Inverti le lingue", title: "Inverti le lingue", style: { ...secondaryBtnStyle, padding: "6px 12px" } }, "⇄"),
+      h("span", { style: { fontWeight: 700, color: C.ink } }, a)
+    ),
+    h(
+      "div",
+      { style: { position: "relative", marginBottom: 14 } },
+      h("textarea", { value: testo, onChange: (e) => setTesto(e.target.value), rows: 3, placeholder: dallItaliano ? "Scrivi la frase in italiano (es. Ieri sono andato a scuola in bicicletta)" : `Scrivi la frase in ${lingua.toLowerCase()}`, "aria-label": "Frase da tradurre", style: textAreaStyle }),
+      h("div", { style: { position: "absolute", bottom: 10, right: 10 } }, h(DictateButton, { onResult: (r) => setTesto((t) => t ? t + " " + r : r), color: C.wine }))
+    ),
+    h(PrimaryButton, { onClick: traduci, disabled: !testo.trim() || status === "loading", color: C.wine, Icon: status === "loading" ? Loader2 : Sparkles }, status === "loading" ? "Traduco…" : "Traduci"),
+    res && status === "result" && h(
+      "div",
+      { style: { marginTop: 18 } },
+      h(
+        "div",
+        { style: { ...card, borderLeft: `5px solid ${C.wine}` } },
+        h("div", { style: { ...small, marginBottom: 6 } }, `${res.da} → ${res.a}`),
+        h("div", { "data-trad-out": "1", style: { fontSize: "calc(1.2em * var(--fs))", fontWeight: 700, color: C.ink, lineHeight: 1.5 } }, res.traduzione),
+        res.pronuncia && h("div", { style: { ...small, marginTop: 6 } }, "Si legge circa: ", h("i", null, res.pronuncia)),
+        res.alternativa && h("div", { style: { marginTop: 8, color: C.ink } }, h("span", { style: small }, "Oppure: "), res.alternativa),
+        h(
+          "div",
+          { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 } },
+          h("button", { onClick: () => speakInLanguage(res.traduzione, resLang), style: secondaryBtnStyle }, h(Volume2, { size: 15 }), " Ascolta la pronuncia"),
+          h("button", { onClick: () => {
+            try {
+              navigator.clipboard && navigator.clipboard.writeText(res.traduzione);
+            } catch {
+            }
+          }, style: secondaryBtnStyle }, "Copia"),
+          h("button", { onClick: () => {
+            onSave({ type: "traduzione", title: `${res.da} → ${res.a} — ${res.testo.slice(0, 40)}`, content: `## ${res.da}
+${res.testo}
+
+## ${res.a}
+**${res.traduzione}**${res.alternativa ? `
+
+Oppure: ${res.alternativa}` : ""}${res.parole.length ? `
+
+## Parole importanti
+${res.parole.map((p) => `- ${p.da} → **${p.a}**`).join("\n")}` : ""}${res.come ? `
+
+## Come si costruisce
+${res.come}` : ""}`, materia: res.a === "Italiano" ? res.da : res.a });
+            setSaved(true);
+          }, style: secondaryBtnStyle }, h(Save, { size: 15 }), saved ? " Salvato" : " Salva")
+        )
+      ),
+      res.parole.length > 0 && h(
+        "div",
+        { style: card },
+        h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8 } }, "Parole importanti"),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "6px 10px", alignItems: "center" } }, res.parole.map((p, i) => [h("span", { key: "a" + i, style: { color: C.ink } }, p.da), h("span", { key: "b" + i, style: { color: C.inkSoft } }, "→"), h("b", { key: "c" + i, style: { color: C.wine } }, p.a)]))
+      ),
+      res.come && h("div", { style: card }, h("div", { style: { fontWeight: 700, color: C.ink, marginBottom: 8, display: "flex", gap: 8, alignItems: "center" } }, h("span", { style: { flex: 1 } }, "Come si costruisce"), h(MiniSpeak, { text: res.come })), h(FormattedText, { text: res.come, interactive: false }))
+    )
+  );
+}
+function DizionarioWebScreen({ onSave }) {
+  const h = React.createElement;
+  const [tab, setTab] = usePref("chiarostudio-dizionario-scheda", "parola");
+  return h(
+    "div",
+    { style: { maxWidth: 640 } },
+    h(PageHeader, { title: "Dizionario", subtitle: tab === "frasi" ? "Traduci frasi intere, partendo dall'italiano, e scopri come si costruiscono." : "Latino, greco, spagnolo, francese e inglese: parola, lemma e significato." }),
+    h(
+      "div",
+      { role: "tablist", style: { display: "flex", gap: 0, marginBottom: 18, border: `1.5px solid ${C.wine}`, borderRadius: 12, overflow: "hidden", width: "fit-content", maxWidth: "100%" } },
+      [["parola", "\u{1F4D6} Cerca una parola"], ["frasi", "\u{1F310} Traduci una frase"]].map(([id, label]) => h("button", { key: id, role: "tab", "aria-selected": tab === id, onClick: () => setTab(id), style: { border: "none", padding: "10px 16px", background: tab === id ? C.wine : C.card, color: tab === id ? "#FBFAF4" : C.ink, fontWeight: 700, fontFamily: FONT, cursor: "pointer", fontSize: "calc(0.9em * var(--fs))" } }, label))
+    ),
+    h(DizHistory, null),
+    tab === "frasi" ? h(TraduttoreFrasi, { onSave }) : h(DizionarioParoleScreen, { onSave })
+  );
+}
+const POMO_COLOR = "#D9534F";
+const POMO_KEY = "chiarostudio-pomodoro";
+const POMO_PRESETS = [
+  { id: "breve", label: "Breve", studio: 15, pausa: 5, lunga: 15, desc: "15 min di studio + 5 di pausa" },
+  { id: "classico", label: "Classico", studio: 25, pausa: 5, lunga: 15, desc: "25 min di studio + 5 di pausa" },
+  { id: "lungo", label: "Lungo", studio: 45, pausa: 10, lunga: 20, desc: "45 min di studio + 10 di pausa" }
+];
+const POMO_PHASE_LABEL = { studio: "Studio", pausa: "Pausa", lunga: "Pausa lunga" };
+const POMO_BREAK_TIPS = [
+  "Alzati e sgranchisci le gambe.",
+  "Bevi un bicchiere d'acqua.",
+  "Guarda fuori dalla finestra, lontano: gli occhi si riposano.",
+  "Fai tre respiri lenti e profondi.",
+  "Muovi le spalle e il collo, piano.",
+  "Stai lontano dal telefono: la pausa funziona meglio.",
+  "Mangia qualcosa di leggero, se hai fame."
+];
+function pomoToday() {
+  const d = /* @__PURE__ */ new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+function pomoDefault() {
+  return { preset: "classico", custom: null, phase: "studio", running: false, endAt: 0, remaining: null, cycle: 0, ogni: 4, waiting: false, day: pomoToday(), done: 0, tip: 0, voce: true, suono: true };
+}
+const pomoStore = {
+  state: (() => {
+    try {
+      const s = JSON.parse(window.localStorage.getItem(POMO_KEY) || "null");
+      return s ? { ...pomoDefault(), ...s } : pomoDefault();
+    } catch {
+      return pomoDefault();
+    }
+  })(),
+  listeners: /* @__PURE__ */ new Set(),
+  timer: null,
+  audio: null
+};
+function pomoDurations(st) {
+  const p = st.custom || POMO_PRESETS.find((x) => x.id === st.preset) || POMO_PRESETS[1];
+  return { studio: p.studio, pausa: p.pausa, lunga: p.lunga };
+}
+function pomoPhaseMs(st, phase) {
+  return pomoDurations(st)[phase || st.phase] * 6e4;
+}
+function pomoSet(patch) {
+  const next = { ...pomoStore.state, ...patch };
+  if (next.day !== pomoToday()) {
+    next.day = pomoToday();
+    next.done = 0;
+  }
+  pomoStore.state = next;
+  try {
+    window.localStorage.setItem(POMO_KEY, JSON.stringify(next));
+  } catch {
+  }
+  pomoStore.listeners.forEach((fn) => fn(next));
+  pomoEnsureTimer();
+}
+function pomoRemaining(st) {
+  if (st.running) return Math.max(0, st.endAt - Date.now());
+  return st.remaining !== null && st.remaining !== void 0 ? st.remaining : pomoPhaseMs(st);
+}
+function pomoBeep(kind) {
+  if (!pomoStore.state.suono) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!pomoStore.audio) pomoStore.audio = new Ctx();
+    const ctx = pomoStore.audio;
+    if (ctx.state === "suspended") ctx.resume();
+    const notes = kind === "studio" ? [660, 880, 1046] : [784, 659, 523];
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      const t0 = ctx.currentTime + i * 0.28;
+      g.gain.setValueAtTime(1e-4, t0);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.03);
+      g.gain.exponentialRampToValueAtTime(1e-4, t0 + 0.26);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(t0);
+      o.stop(t0 + 0.3);
+    });
+  } catch {
+  }
+}
+function pomoAnnounce(text) {
+  try {
+    if (navigator.vibrate) navigator.vibrate([200, 120, 200]);
+  } catch {
+  }
+  if (!pomoStore.state.voce) return;
+  try {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    const u = new window.SpeechSynthesisUtterance(text);
+    u.lang = "it-IT";
+    const v = typeof pickVoice === "function" ? pickVoice() : null;
+    if (v) u.voice = v;
+    setTimeout(() => window.speechSynthesis.speak(u), 900);
+  } catch {
+  }
+}
+function pomoFinishPhase() {
+  const st = pomoStore.state;
+  if (st.phase === "studio") {
+    const cycle = st.cycle + 1;
+    const nextPhase = cycle >= st.ogni ? "lunga" : "pausa";
+    const tip = (st.tip + 1) % POMO_BREAK_TIPS.length;
+    pomoSet({ phase: nextPhase, cycle: nextPhase === "lunga" ? 0 : cycle, done: st.done + 1, running: true, endAt: Date.now() + pomoPhaseMs(st, nextPhase), remaining: null, waiting: false, tip });
+    pomoBeep("pausa");
+    pomoAnnounce(nextPhase === "lunga" ? `Ottimo lavoro! Hai finito ${st.ogni} pomodori. Ora fai una pausa lunga.` : `Tempo scaduto, ottimo lavoro! Ora fai una pausa. ${POMO_BREAK_TIPS[tip]}`);
+  } else {
+    pomoSet({ phase: "studio", running: false, endAt: 0, remaining: null, waiting: true });
+    pomoBeep("studio");
+    pomoAnnounce("La pausa \xE8 finita. Quando sei pronto, riprendi a studiare.");
+  }
+}
+function pomoEnsureTimer() {
+  const st = pomoStore.state;
+  if (st.running && !pomoStore.timer) {
+    pomoStore.timer = setInterval(() => {
+      const s = pomoStore.state;
+      if (!s.running) return;
+      if (Date.now() >= s.endAt) pomoFinishPhase();
+      else pomoStore.listeners.forEach((fn) => fn(s));
+    }, 500);
+  } else if (!st.running && pomoStore.timer) {
+    clearInterval(pomoStore.timer);
+    pomoStore.timer = null;
+  }
+}
+function pomoStart() {
+  const st = pomoStore.state;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx && !pomoStore.audio) pomoStore.audio = new Ctx();
+    if (pomoStore.audio && pomoStore.audio.state === "suspended") pomoStore.audio.resume();
+  } catch {
+  }
+  pomoSet({ running: true, endAt: Date.now() + pomoRemaining(st), remaining: null, waiting: false });
+}
+function pomoPause() {
+  const st = pomoStore.state;
+  pomoSet({ running: false, remaining: pomoRemaining(st), endAt: 0 });
+}
+function pomoReset() {
+  pomoSet({ running: false, endAt: 0, remaining: null, phase: "studio", cycle: 0, waiting: false });
+}
+function pomoSkip() {
+  const st = pomoStore.state;
+  if (st.phase === "studio") {
+    const nextPhase = st.cycle + 1 >= st.ogni ? "lunga" : "pausa";
+    pomoSet({ phase: nextPhase, cycle: nextPhase === "lunga" ? 0 : st.cycle + 1, running: false, endAt: 0, remaining: null, waiting: false });
+  } else {
+    pomoSet({ phase: "studio", running: false, endAt: 0, remaining: null, waiting: false });
+  }
+}
+if (pomoStore.state.running && Date.now() >= pomoStore.state.endAt) {
+  setTimeout(pomoFinishPhase, 500);
+}
+pomoEnsureTimer();
+function usePomodoro() {
+  const [st, setSt] = useState(pomoStore.state);
+  useEffect(() => {
+    const fn = (s) => setSt({ ...s });
+    pomoStore.listeners.add(fn);
+    return () => pomoStore.listeners.delete(fn);
+  }, []);
+  return st;
+}
+function pomoFmt(ms) {
+  const tot = Math.ceil(ms / 1e3);
+  const m = Math.floor(tot / 60);
+  const s = tot % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+function PomodoroMini({ onOpen, bottom = 16 }) {
+  const st = usePomodoro();
+  const active = st.running || st.remaining !== null && st.remaining !== void 0 || st.waiting;
+  if (!active) return null;
+  const isBreak = st.phase !== "studio";
+  const label = st.waiting ? "Pausa finita: riprendi" : `${isBreak ? "☕ " + POMO_PHASE_LABEL[st.phase] : "\u{1F345} Studio"} ${pomoFmt(pomoRemaining(st))}${st.running ? "" : " (in pausa)"}`;
+  return React.createElement("button", {
+    onClick: onOpen,
+    "data-pomo-mini": "1",
+    "aria-label": "Apri il timer pomodoro: " + label,
+    style: { position: "fixed", right: 16, bottom, zIndex: 51, display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 999, border: "none", background: st.waiting ? "#B3672B" : isBreak ? "#4F7B79" : POMO_COLOR, color: "#FBFAF4", fontWeight: 700, fontFamily: FONT, fontSize: "calc(0.9em * var(--fs))", boxShadow: "0 6px 18px rgba(38,55,75,0.25)", cursor: "pointer", fontVariantNumeric: "tabular-nums" }
+  }, label);
+}
+function PomodoroScreen() {
+  const h = React.createElement;
+  const st = usePomodoro();
+  const [showCustom, setShowCustom] = useState(!!st.custom);
+  const total = pomoPhaseMs(st);
+  const rem = pomoRemaining(st);
+  const frac = Math.max(0, Math.min(1, 1 - rem / total));
+  const isBreak = st.phase !== "studio";
+  const col = isBreak ? "#4F7B79" : POMO_COLOR;
+  const R = 108;
+  const CIRC = 2 * Math.PI * R;
+  const d = pomoDurations(st);
+  const idle = !st.running && (st.remaining === null || st.remaining === void 0);
+  const setDur = (key, delta, min, max) => {
+    const base = st.custom || { ...pomoDurations(st) };
+    const c = { ...base, [key]: Math.max(min, Math.min(max, base[key] + delta)) };
+    pomoSet({ custom: c, preset: "personale", remaining: idle ? null : st.remaining });
+  };
+  const small = { color: C.inkSoft, fontSize: "calc(0.85em * var(--fs))", lineHeight: 1.45 };
+  const bigBtn = (label, onClick, primary, extra) => h("button", { onClick, style: { padding: "14px 22px", borderRadius: 14, border: primary ? "none" : `1.5px solid ${C.border}`, background: primary ? col : C.card, color: primary ? "#FBFAF4" : C.ink, fontWeight: 700, fontFamily: FONT, fontSize: "calc(1em * var(--fs))", cursor: "pointer", minWidth: 120, ...extra || {} } }, label);
+  const stepper = (key, label, min, max, step) => h(
+    "div",
+    { key, style: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", padding: "6px 0" } },
+    h("span", { style: { color: C.ink } }, label),
+    h(
+      "span",
+      { style: { display: "inline-flex", alignItems: "center", gap: 6 } },
+      h("button", { onClick: () => setDur(key, -step, min, max), "aria-label": `Meno minuti: ${label}`, style: { ...secondaryBtnStyle, padding: "4px 12px" } }, "−"),
+      h("b", { style: { minWidth: 62, textAlign: "center", color: C.ink } }, d[key], " min"),
+      h("button", { onClick: () => setDur(key, step, min, max), "aria-label": `Pi\xF9 minuti: ${label}`, style: { ...secondaryBtnStyle, padding: "4px 12px" } }, "+")
+    )
+  );
+  return h(
+    "div",
+    { style: { maxWidth: 560 } },
+    h(PageHeader, { title: "Timer pomodoro", subtitle: "Studia a blocchi con pause regolari: aiuta a restare concentrati senza stancarsi." }),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 } },
+      POMO_PRESETS.map((p) => h("button", {
+        key: p.id,
+        onClick: () => {
+          setShowCustom(false);
+          pomoSet({ preset: p.id, custom: null, ...idle || st.waiting ? { remaining: null } : {} });
+        },
+        "aria-pressed": st.preset === p.id,
+        title: p.desc,
+        style: { ...secondaryBtnStyle, background: st.preset === p.id ? POMO_COLOR : C.card, color: st.preset === p.id ? "#FBFAF4" : C.ink, borderColor: st.preset === p.id ? POMO_COLOR : C.border }
+      }, `${p.label} ${p.studio}+${p.pausa}`)),
+      h("button", { onClick: () => setShowCustom(!showCustom), "aria-pressed": st.preset === "personale", style: { ...secondaryBtnStyle, background: st.preset === "personale" ? POMO_COLOR : C.card, color: st.preset === "personale" ? "#FBFAF4" : C.ink, borderColor: st.preset === "personale" ? POMO_COLOR : C.border } }, "⚙️ Personalizza")
+    ),
+    showCustom && h(
+      "div",
+      { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: "10px 16px", marginBottom: 18 } },
+      stepper("studio", "Studio", 5, 90, 5),
+      stepper("pausa", "Pausa", 1, 30, 1),
+      stepper("lunga", "Pausa lunga", 5, 45, 5)
+    ),
+    h(
+      "div",
+      { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 24, padding: "24px 16px", textAlign: "center", marginBottom: 16 } },
+      h("div", { "data-pomo-phase": st.phase, style: { fontWeight: 700, color: col, fontSize: "calc(1.15em * var(--fs))", marginBottom: 8 } }, st.waiting ? "⏰ Pausa finita!" : isBreak ? `☕ ${POMO_PHASE_LABEL[st.phase]}` : "\u{1F345} Studio"),
+      h(
+        "div",
+        { style: { position: "relative", width: "min(250px, 68vw)", aspectRatio: "1 / 1", margin: "0 auto" } },
+        h(
+          "svg",
+          { viewBox: "0 0 250 250", width: "100%", height: "100%", "aria-hidden": "true" },
+          h("circle", { cx: 125, cy: 125, r: R, fill: "none", stroke: "rgba(38,55,75,0.08)", strokeWidth: 16 }),
+          h("circle", { cx: 125, cy: 125, r: R, fill: "none", stroke: col, strokeWidth: 16, strokeLinecap: "round", strokeDasharray: CIRC, strokeDashoffset: CIRC * frac, transform: "rotate(-90 125 125)", style: { transition: "stroke-dashoffset 0.5s linear" } })
+        ),
+        h("div", { "data-pomo-time": "1", role: "timer", "aria-live": "off", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "clamp(34px, 12vw, 54px)", fontWeight: 700, color: C.ink, fontVariantNumeric: "tabular-nums", fontFamily: FONT } }, pomoFmt(rem))
+      ),
+      h("div", { style: { ...small, margin: "10px 0 16px" } }, isBreak ? POMO_BREAK_TIPS[st.tip % POMO_BREAK_TIPS.length] : st.waiting ? "Quando sei pronto, premi Inizia." : `Pomodoro ${st.cycle + 1} di ${st.ogni} \xB7 poi una pausa lunga`),
+      h(
+        "div",
+        { style: { display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" } },
+        st.running ? bigBtn("⏸ Pausa", pomoPause, true) : bigBtn(idle || st.waiting ? isBreak ? "▶ Inizia la pausa" : "▶ Inizia" : "▶ Riprendi", pomoStart, true),
+        bigBtn(isBreak ? "⏭ Salta la pausa" : "⏭ Passa alla pausa", pomoSkip, false),
+        bigBtn("↺ Ricomincia", pomoReset, false)
+      )
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" } },
+      h("span", { style: { color: C.ink, fontWeight: 700 } }, "Oggi:"),
+      h("span", { "data-pomo-done": st.done, style: { fontSize: 22, letterSpacing: 2 } }, st.done ? "\u{1F345}".repeat(Math.min(st.done, 12)) : ""),
+      h("span", { style: small }, st.done ? `${st.done} ${st.done === 1 ? "pomodoro completato" : "pomodori completati"}` : "ancora nessun pomodoro completato")
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 } },
+      h("button", { onClick: () => pomoSet({ suono: !st.suono }), "aria-pressed": st.suono, style: secondaryBtnStyle }, st.suono ? "\u{1F514} Suono attivo" : "\u{1F515} Suono spento"),
+      h("button", { onClick: () => pomoSet({ voce: !st.voce }), "aria-pressed": st.voce, style: secondaryBtnStyle }, st.voce ? "\u{1F5E3}️ Avviso a voce attivo" : "\u{1F507} Avviso a voce spento")
+    ),
+    h("p", { style: small }, "Puoi usare le altre sezioni mentre il timer va: in basso a destra vedi sempre quanto manca. Alla fine di ogni blocco senti un suono e un avviso a voce.")
+  );
+}
+/* ---------- Esportazione: Word (.docx), immagine della mappa, condivisione / Google Drive ---------- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 4294967295;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 255] ^ c >>> 8;
+  return (c ^ 4294967295) >>> 0;
+}
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  files.forEach((f) => {
+    const name = enc.encode(f.name);
+    const data = typeof f.data === "string" ? enc.encode(f.data) : f.data;
+    const crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 67324752, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 2048, true);
+    local.setUint16(8, 0, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(local.buffer), name, data);
+    const cen = new DataView(new ArrayBuffer(46));
+    cen.setUint32(0, 33639248, true);
+    cen.setUint16(4, 20, true);
+    cen.setUint16(6, 20, true);
+    cen.setUint16(8, 2048, true);
+    cen.setUint32(16, crc, true);
+    cen.setUint32(20, data.length, true);
+    cen.setUint32(24, data.length, true);
+    cen.setUint16(28, name.length, true);
+    cen.setUint32(42, offset, true);
+    central.push(new Uint8Array(cen.buffer), name);
+    offset += 30 + name.length + data.length;
+  });
+  const cenSize = central.reduce((n, p) => n + p.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 101010256, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, cenSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+function xmlEsc(t) {
+  return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function docxRuns(text, base) {
+  const parts = String(text).split(/(\*\*[^*]+\*\*)/);
+  return parts.filter(Boolean).map((p) => {
+    const bold = p.startsWith("**") && p.endsWith("**") && p.length > 4;
+    const t = bold ? p.slice(2, -2) : p;
+    return `<w:r><w:rPr><w:rFonts w:ascii="Verdana" w:hAnsi="Verdana" w:cs="Verdana"/>${bold || base.bold ? "<w:b/>" : ""}<w:sz w:val="${base.size || 26}"/>${base.color ? `<w:color w:val="${base.color}"/>` : ""}</w:rPr><w:t xml:space="preserve">${xmlEsc(t)}</w:t></w:r>`;
+  }).join("");
+}
+function buildDocx(title, text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const paras = [];
+  const para = (inner, opts = {}) => `<w:p><w:pPr><w:spacing w:after="${opts.after || 160}" w:line="360" w:lineRule="auto"/>${opts.ind ? `<w:ind w:left="${opts.ind}" w:hanging="280"/>` : ""}</w:pPr>${inner}</w:p>`;
+  paras.push(para(docxRuns(title, { bold: true, size: 40, color: "26374B" }), { after: 280 }));
+  lines.forEach((raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    const head = line.match(/^#{1,3}\s+(.*)$/);
+    const bullet = line.match(/^[-•*]\s+(.*)$/);
+    if (head) paras.push(para(docxRuns(head[1], { bold: true, size: 30, color: "26374B" }), { after: 140 }));
+    else if (bullet) paras.push(para(docxRuns("•  " + bullet[1], {}), { ind: 560, after: 100 }));
+    else paras.push(para(docxRuns(line, {})));
+  });
+  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paras.join("")}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  return makeZip([
+    { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>` },
+    { name: "word/document.xml", data: doc }
+  ]);
+}
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+function safeFileName(t) {
+  return String(t || "Chiarostudio").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "Chiarostudio";
+}
+function wrapCanvasText(ctx, text, maxW) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  words.forEach((w) => {
+    const test = cur ? cur + " " + w : w;
+    if (ctx.measureText(test).width > maxW && cur) {
+      lines.push(cur);
+      cur = w;
+    } else cur = test;
+  });
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
+}
+function mapToPngBlob(data) {
+  return new Promise((resolve, reject) => {
+    try {
+      const branches = Array.isArray(data && data.branches) ? data.branches : [];
+      const edges = Array.isArray(data && data.edges) ? data.edges : branches.map((b) => ({ a: "center", b: b.id }));
+      const UNIT = 9;
+      let minX = 50, maxX = 50, minY = 50, maxY = 50;
+      branches.forEach((b) => {
+        minX = Math.min(minX, b.x);
+        maxX = Math.max(maxX, b.x);
+        minY = Math.min(minY, b.y);
+        maxY = Math.max(maxY, b.y);
+      });
+      const pad = 170;
+      const W = Math.max(1200, (maxX - minX) * UNIT * 1.6 + pad * 2);
+      const H = Math.max(850, (maxY - minY) * UNIT * 1.1 + pad * 2 + 80);
+      const sx = (x) => pad + (x - minX) * UNIT * 1.6 + (W - pad * 2 - (maxX - minX) * UNIT * 1.6) / 2;
+      const sy = (y) => pad + 80 + (y - minY) * UNIT * 1.1 + (H - pad * 2 - 80 - (maxY - minY) * UNIT * 1.1) / 2;
+      const c = document.createElement("canvas");
+      c.width = Math.round(W);
+      c.height = Math.round(H);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#26374B";
+      ctx.font = "bold 34px Verdana, Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(String(data && data.topic || "Mappa mentale"), W / 2, 60);
+      const pos = { center: { x: sx(50), y: sy(50) } };
+      branches.forEach((b) => pos[b.id] = { x: sx(b.x), y: sy(b.y) });
+      ctx.strokeStyle = "rgba(38,55,75,0.45)";
+      ctx.lineWidth = 3;
+      edges.forEach((e) => {
+        const a = pos[e.a], b = pos[e.b];
+        if (!a || !b) return;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      });
+      ctx.font = "bold 24px Verdana, Arial, sans-serif";
+      const cLines = wrapCanvasText(ctx, data && data.topic || "", 150);
+      const cr = Math.max(100, cLines.length * 16 + 60);
+      ctx.fillStyle = "#26374B";
+      ctx.beginPath();
+      ctx.arc(pos.center.x, pos.center.y, cr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#FBFAF4";
+      cLines.forEach((l, i) => ctx.fillText(l, pos.center.x, pos.center.y - (cLines.length - 1) * 15 + i * 30 + 8));
+      branches.forEach((b) => {
+        const p = pos[b.id];
+        const fs = Math.round(20 * (b.scale || 1));
+        ctx.font = `bold ${fs}px Verdana, Arial, sans-serif`;
+        const maxW = Math.max(140, (b.w || 170) * 1.25 * (b.scale || 1));
+        const lines = wrapCanvasText(ctx, b.text || "", maxW);
+        const tw = Math.min(maxW, Math.max(...lines.map((l) => ctx.measureText(l).width)));
+        const bw = tw + 36;
+        const bh = lines.length * fs * 1.3 + 26;
+        const x = p.x - bw / 2, y = p.y - bh / 2, r = 16;
+        ctx.fillStyle = b.color || "#4A6FA5";
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + bw, y, x + bw, y + bh, r);
+        ctx.arcTo(x + bw, y + bh, x, y + bh, r);
+        ctx.arcTo(x, y + bh, x, y, r);
+        ctx.arcTo(x, y, x + bw, y, r);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#FFFFFF";
+        lines.forEach((l, i) => ctx.fillText(l, p.x, y + 13 + fs + i * fs * 1.3 - 2));
+      });
+      c.toBlob((blob) => blob ? resolve(blob) : reject(new Error("png")), "image/png");
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+async function shareOrDownloadFile(blob, filename, title) {
+  const mime = blob.type || "application/octet-stream";
+  try {
+    if (window.ChiaroAndroid && typeof window.ChiaroAndroid.shareFile === "function") {
+      const b64 = await blobToBase64(blob);
+      window.ChiaroAndroid.shareFile(filename, mime, b64);
+      return "shared";
+    }
+  } catch {
+  }
+  const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  try {
+    const file = new File([blob], filename, { type: mime });
+    if (coarse && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: title || filename });
+      return "shared";
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return "cancelled";
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4e3);
+  return "downloaded";
+}
+function archiveItemToText(item) {
+  let data = null;
+  try {
+    data = JSON.parse(item.content);
+  } catch {
+  }
+  if (item.type === "matematica" && data && data.lesson) {
+    const l = data.lesson;
+    const out = [l.introduzione || ""];
+    (l.unita || []).forEach((u, i) => {
+      out.push(`## ${i + 1}. ${u.titolo}`, u.spiegazione || "");
+      if (u.esempio) out.push("**Esempio svolto**", u.esempio);
+    });
+    if ((l.esercizi || []).length) {
+      out.push("## Esercizi");
+      l.esercizi.forEach((e, i) => out.push(`**Esercizio ${i + 1}.** ${e.testo}`, `Soluzione: ${e.risultato}`, e.svolgimento || ""));
+    }
+    return plainMath(out.join("\n"));
+  }
+  if (item.type === "correzione" && data && data.result) {
+    const r = data.result;
+    const out = [r.commento || ""];
+    (r.punti || []).forEach((p) => {
+      out.push(`## Punto ${p.numero}`, p.consegna ? `Consegna: ${p.consegna}` : "", `Risposta: ${p.risposta_studente}`, `Esito: ${p.esito}`);
+      if (p.esito !== "giusto") out.push(p.errore ? `Errore: ${p.errore}` : "", `Soluzione: **${p.soluzione}**`, p.spiegazione || "");
+    });
+    return out.filter(Boolean).join("\n");
+  }
+  if (item.type === "flashcard") {
+    const cards = Array.isArray(data) ? data : data && Array.isArray(data.cards) ? data.cards : null;
+    if (cards) return cards.map((c, i) => `## Carta ${i + 1}\n**Domanda:** ${c.fronte}\n**Risposta:** ${c.retro}`).join("\n");
+  }
+  if (typeof item.content === "string" && !data) return item.content;
+  if (data && typeof data === "object") return JSON.stringify(data, null, 2);
+  return String(item.content || "");
+}
+async function exportArchiveItem(item) {
+  let data = null;
+  try {
+    data = JSON.parse(item.content);
+  } catch {
+  }
+  if (item.type === "mappa" && data && Array.isArray(data.branches)) {
+    const blob = await mapToPngBlob(data);
+    return shareOrDownloadFile(blob, safeFileName(item.title) + ".png", item.title);
+  }
+  const blob = buildDocx(item.title, archiveItemToText(item));
+  return shareOrDownloadFile(new Blob([blob], { type: DOCX_MIME }), safeFileName(item.title) + ".docx", item.title);
+}
+function ExportButton({ getFile, label = "\u{1F4E4} Drive / Condividi", style }) {
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    setMsg("");
+    try {
+      const r = await getFile();
+      if (r === "downloaded") setMsg("File scaricato: puoi caricarlo su Google Drive o stamparlo.");
+      else if (r === "shared") setMsg("Scegli “Salva su Drive” (o un'altra app) per salvarlo.");
+    } catch {
+      setMsg("Non sono riuscito a preparare il file. Riprova.");
+    }
+    setBusy(false);
+    setTimeout(() => setMsg(""), 6e3);
+  };
+  return React.createElement(
+    "span",
+    { style: { display: "inline-flex", flexDirection: "column", gap: 4 } },
+    React.createElement("button", { onClick: run, disabled: busy, title: "Salva su Google Drive, stampa o condividi", "data-export-btn": "1", style: { ...secondaryBtnStyle, ...style || {} } }, busy ? "Preparo il file…" : label),
+    msg && React.createElement("span", { role: "status", style: { color: C.inkSoft, fontSize: "calc(0.75em * var(--fs))", maxWidth: 260 } }, msg)
+  );
+}
+/* ---------- Pannello Appunti (in tutte le sezioni) ---------- */
+const NOTES_DRAFT_KEY = "chiarostudio-appunti-bozza";
+function readNotesDraft() {
+  try {
+    return JSON.parse(window.localStorage.getItem(NOTES_DRAFT_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+function NotesPanel({ onClose, sectionTitle, archivio, onSave, loadItem }) {
+  const h = React.createElement;
+  const draft = readNotesDraft();
+  const today = (/* @__PURE__ */ new Date()).toLocaleDateString("it-IT");
+  const [title, setTitle] = useState(draft && draft.title || `Appunti — ${sectionTitle} — ${today}`);
+  const [text, setText] = useState(draft && draft.text || "");
+  const [savedId, setSavedId] = useState(draft && draft.savedId || null);
+  const [dirty, setDirty] = useState(!!(draft && draft.dirty));
+  const [listOpen, setListOpen] = useState(false);
+  const [flash, setFlash] = useState("");
+  const loadedRef = useRef(null);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(NOTES_DRAFT_KEY, JSON.stringify({ title, text, savedId, dirty }));
+    } catch {
+    }
+  }, [title, text, savedId, dirty]);
+  useEffect(() => {
+    if (!loadItem || loadedRef.current === loadItem.nonce) return;
+    loadedRef.current = loadItem.nonce;
+    setTitle(loadItem.item.title);
+    setText(loadItem.item.content || "");
+    setSavedId(loadItem.item.id);
+    setDirty(false);
+  }, [loadItem]);
+  const save = () => {
+    if (!text.trim()) return null;
+    const id = onSave({ type: "appunti", title: title.trim() || "Appunti", content: text, materia: sectionTitle }, savedId);
+    if (id) setSavedId(id);
+    setDirty(false);
+    setFlash("✓ Salvati nell'archivio");
+    setTimeout(() => setFlash(""), 2e3);
+    return id;
+  };
+  const nuovo = () => {
+    if (text.trim() && dirty) save();
+    setTitle(`Appunti — ${sectionTitle} — ${today}`);
+    setText("");
+    setSavedId(null);
+    setDirty(false);
+  };
+  const saved = (archivio || []).filter((i) => i.type === "appunti");
+  const small = { ...secondaryBtnStyle, padding: "6px 10px", fontSize: "calc(0.8em * var(--fs))" };
+  return h(
+    "aside",
+    { className: "chiaro-notes", "aria-label": "Appunti", "data-notes-panel": "1" },
+    h(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+      h("b", { style: { flex: 1, color: C.ink, fontSize: "calc(1.05em * var(--fs))" } }, "\u{1F4DD} Appunti"),
+      h(MiniSpeak, { text }),
+      h("button", { onClick: onClose, "aria-label": "Chiudi gli appunti", style: { ...small, padding: "6px 12px" } }, "✕")
+    ),
+    h("input", { value: title, onChange: (e) => {
+      setTitle(e.target.value);
+      setDirty(true);
+    }, "aria-label": "Titolo degli appunti", style: { width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${C.border}`, fontFamily: FONT, fontWeight: 700, fontSize: "calc(0.9em * var(--fs))", marginBottom: 8, color: C.ink, background: "#fff" } }),
+    h(
+      "div",
+      { style: { position: "relative", flex: 1, minHeight: 120, display: "flex" } },
+      h("textarea", { value: text, onChange: (e) => {
+        setText(e.target.value);
+        setDirty(true);
+      }, placeholder: "Scrivi o detta qui i tuoi appunti mentre studi…", "aria-label": "Testo degli appunti", style: { ...textAreaStyle, flex: 1, minHeight: 120, height: "100%", resize: "none", paddingBottom: 48 } }),
+      h("div", { style: { position: "absolute", bottom: 10, right: 10 } }, h(DictateButton, { onResult: (r) => {
+        setText((t) => t ? t + (t.endsWith("\n") ? "" : " ") + r : r);
+        setDirty(true);
+      }, color: C.ink }))
+    ),
+    h(
+      "div",
+      { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "flex-start" } },
+      h("button", { onClick: save, disabled: !text.trim(), style: { ...small, background: C.ink, color: "#FBFAF4", borderColor: C.ink, opacity: text.trim() ? 1 : 0.5 } }, savedId ? "\u{1F4BE} Salva" : "\u{1F4BE} Salva nell'archivio"),
+      h("button", { onClick: nuovo, style: small }, "+ Nuovi"),
+      h("button", { onClick: () => setListOpen(!listOpen), style: small }, `\u{1F4C2} Apri (${saved.length})`),
+      h(ExportButton, { style: small, label: "\u{1F4E4} Drive", getFile: () => shareOrDownloadFile(new Blob([buildDocx(title, text)], { type: DOCX_MIME }), safeFileName(title) + ".docx", title) })
+    ),
+    flash && h("div", { role: "status", style: { color: C.moss, fontWeight: 700, fontSize: "calc(0.8em * var(--fs))", marginTop: 6 } }, flash),
+    !flash && dirty && savedId && h("div", { style: { color: C.inkSoft, fontSize: "calc(0.75em * var(--fs))", marginTop: 6 } }, "Modifiche non ancora salvate (la bozza resta comunque sul dispositivo)."),
+    listOpen && h(
+      "div",
+      { style: { marginTop: 8, maxHeight: 180, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff" } },
+      saved.length === 0 ? h("div", { style: { padding: 10, color: C.inkSoft } }, "Nessun appunto salvato.") : saved.map((it) => h("button", { key: it.id, onClick: () => {
+        if (text.trim() && dirty) save();
+        setTitle(it.title);
+        setText(it.content || "");
+        setSavedId(it.id);
+        setDirty(false);
+        setListOpen(false);
+      }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none", borderBottom: `1px solid ${C.border}`, background: it.id === savedId ? "rgba(38,55,75,0.06)" : "#fff", cursor: "pointer", fontFamily: FONT, color: C.ink, fontSize: "calc(0.85em * var(--fs))" } }, it.title))
+    )
+  );
+}
+const NOTES_CSS = `
+.chiaro-notes { position: fixed; z-index: 60; background: #F7F3EA; border-left: 1px solid rgba(38,55,75,0.15); box-shadow: -6px 0 22px rgba(38,55,75,0.12); display: flex; flex-direction: column; padding: 14px; font-family: inherit; }
+@media (min-width: 900px) {
+  .chiaro-notes { top: 0; right: 0; bottom: 0; width: 380px; }
+  .notes-open .chiaro-content { margin-right: 380px; }
+}
+@media (max-width: 899px) {
+  .chiaro-notes { left: 0; right: 0; bottom: 0; height: 52vh; border-left: none; border-top: 1px solid rgba(38,55,75,0.15); border-radius: 18px 18px 0 0; box-shadow: 0 -6px 22px rgba(38,55,75,0.15); }
+  .notes-open .chiaro-content { padding-bottom: 56vh !important; }
+}
+.chiaro-notes-tab { position: fixed; right: 0; top: 42%; z-index: 52; writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 7px; border: none; border-radius: 0 12px 12px 0; background: #26374B; color: #FBFAF4; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(38,55,75,0.25); }
+`;
+/* ---------- Altoparlante che segue il testo ---------- */
+function SideSpeak({ text, color, label }) {
+  const { speak, stop, speaking, supported } = useSpeech();
+  if (!supported) return null;
+  return React.createElement(
+    "div",
+    { style: { position: "sticky", top: "38vh", height: 0, zIndex: 6 }, "aria-hidden": false },
+    React.createElement("button", {
+      onClick: (e) => {
+        e.stopPropagation();
+        speaking ? stop() : speak(text);
+      },
+      "data-side-speak": "1",
+      "aria-label": speaking ? "Ferma la voce (a lato)" : "Leggi ad alta voce (a lato)",
+      title: speaking ? "Ferma la lettura" : label || "Ascolta",
+      style: { position: "absolute", left: -40, top: 0, width: 40, height: 40, borderRadius: "50%", border: `2px solid ${color}`, background: speaking ? color : "#fff", color: speaking ? "#fff" : color, boxShadow: "0 4px 12px rgba(38,55,75,0.22)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }
+    }, speaking ? React.createElement(Square, { size: 14 }) : React.createElement(Volume2, { size: 17 }))
+  );
+}
+/* ---------- Cronologia del dizionario ---------- */
+const DIZ_HISTORY_KEY = "chiarostudio-dizionario-cronologia";
+const dizHistoryListeners = /* @__PURE__ */ new Set();
+function readDizHistory() {
+  try {
+    const l = JSON.parse(window.localStorage.getItem(DIZ_HISTORY_KEY) || "[]");
+    return Array.isArray(l) ? l : [];
+  } catch {
+    return [];
+  }
+}
+function addDizHistory(entry) {
+  const sameKey = (e) => e.tipo === entry.tipo && (entry.tipo === "parola" ? e.lingua === entry.lingua && normalizeTopic(e.parola) === normalizeTopic(entry.parola) : e.da === entry.da && e.a === entry.a && e.testo === entry.testo);
+  const next = [{ ...entry, ts: Date.now() }, ...readDizHistory().filter((e) => !sameKey(e))].slice(0, 40);
+  try {
+    window.localStorage.setItem(DIZ_HISTORY_KEY, JSON.stringify(next));
+  } catch {
+  }
+  dizHistoryListeners.forEach((fn) => fn(next));
+}
+function useDizHistory() {
+  const [list, setList] = useState(readDizHistory);
+  useEffect(() => {
+    const fn = (l) => setList(l);
+    dizHistoryListeners.add(fn);
+    return () => dizHistoryListeners.delete(fn);
+  }, []);
+  return list;
+}
+function DizHistory() {
+  const h = React.createElement;
+  const list = useDizHistory();
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState(null);
+  const [cache, setCache] = useState({});
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    loadTopicCache().then((c) => alive && setCache(c || {}));
+    return () => {
+      alive = false;
+    };
+  }, [open, list.length]);
+  if (!list.length) return null;
+  const label = (e) => e.tipo === "parola" ? `${e.parola} \xB7 ${e.lingua}` : `“${e.testo.length > 34 ? e.testo.slice(0, 34) + "…" : e.testo}” → ${e.a}`;
+  const openEntry = (e) => {
+    if (e.tipo === "parola") {
+      const c = cache[`dizionario:${e.lingua}:${normalizeTopic(e.parola)}`];
+      setView({ title: `${e.parola} (${e.lingua})`, text: c && c.voce || "Non trovo pi\xF9 questa voce salvata: cercala di nuovo nella scheda “Cerca una parola”." });
+    } else {
+      const r = e.res || {};
+      setView({ title: `${e.da} → ${e.a}`, text: `${e.testo}\n\n**${r.traduzione || ""}**${r.alternativa ? `\n\nOppure: ${r.alternativa}` : ""}${(r.parole || []).length ? "\n\n## Parole importanti\n" + r.parole.map((p) => `- ${p.da} → **${p.a}**`).join("\n") : ""}${r.come ? "\n\n## Come si costruisce\n" + r.come : ""}` });
+    }
+  };
+  return h(
+    "div",
+    { style: { marginBottom: 16 } },
+    h("button", { onClick: () => setOpen(!open), "aria-expanded": open, style: { ...secondaryBtnStyle, padding: "6px 12px" } }, `\u{1F552} Cronologia (${list.length})`),
+    open && h(
+      "div",
+      { "data-diz-history": "1", style: { marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 } },
+      list.map((e, i) => h("button", { key: i, onClick: () => openEntry(e), style: { ...secondaryBtnStyle, padding: "5px 10px", fontSize: "calc(0.8em * var(--fs))", background: e.tipo === "parola" ? C.card : "rgba(140,78,78,0.06)" } }, e.tipo === "parola" ? "\u{1F4D6} " : "\u{1F310} ", label(e))),
+      h("button", { onClick: () => {
+        try {
+          window.localStorage.removeItem(DIZ_HISTORY_KEY);
+        } catch {
+        }
+        dizHistoryListeners.forEach((fn) => fn([]));
+        setOpen(false);
+      }, style: { ...secondaryBtnStyle, padding: "5px 10px", fontSize: "calc(0.8em * var(--fs))", color: C.wine, borderColor: C.wine } }, "Cancella cronologia")
+    ),
+    view && h(
+      "div",
+      { role: "dialog", "aria-label": view.title, onClick: () => setView(null), style: { position: "fixed", inset: 0, background: "rgba(20,28,38,0.45)", zIndex: 80, display: "flex", alignItems: "flex-end", justifyContent: "center" } },
+      h(
+        "div",
+        { onClick: (ev) => ev.stopPropagation(), style: { background: C.paper, width: "100%", maxWidth: 640, maxHeight: "75vh", overflowY: "auto", borderRadius: "18px 18px 0 0", padding: 18 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } }, h("b", { style: { flex: 1, color: C.ink, fontSize: "calc(1.1em * var(--fs))" } }, view.title), h(MiniSpeak, { text: view.text }), h("button", { onClick: () => setView(null), style: secondaryBtnStyle }, "Chiudi")),
+        h("div", { style: { color: C.ink, lineHeight: 1.6 } }, h(FormattedText, { text: view.text, interactive: false }))
+      )
+    )
+  );
+}
+/* ---------- Video breve / lungo ---------- */
+const VIDEO_DURATE = { breve: { label: "Video breve", hint: "2-7 minuti, pi\xF9 semplice", icon: "⚡" }, lungo: { label: "Video lungo", hint: "12-40 minuti, pi\xF9 approfondito", icon: "\u{1F393}" } };
 const RIASSUNTO_SYSTEM = "Sei un assistente che scrive riassunti chiari per studenti con DSA, a partire da un argomento, un testo o una foto. Scrivi in prosa scorrevole, frasi brevi e dirette, evidenzia con **doppio asterisco** i 4-6 termini chiave pi\xF9 importanti. Usa '## ' per dividere in 2-4 sezioni tematiche se il contenuto lo giustifica. Rispondi solo con il riassunto.";
 const FACILE_SYSTEM = "Sei un assistente che riscrive testi in modo pi\xF9 semplice per studenti con DSA, a partire da un argomento, un testo o una foto. Frasi corte, una idea per frase, parole comuni al posto di termini difficili quando possibile (spiega quelli tecnici indispensabili). Usa '## ' per dividere in sezioni brevi. Rispondi solo con il testo semplificato.";
 const FORMULARIO_SYSTEM = 'Sei un assistente che crea formulari chiari per studenti con DSA, a partire da un argomento. Questi studenti spesso fanno fatica a memorizzare i termini tecnici e a visualizzarli mentalmente: ogni volta che usi un termine tecnico (es. "discriminante", "disequazione", "coefficiente", "verso della disuguaglianza"), spiegalo subito con parole semplici e concrete, non darlo mai per scontato. Non avere fretta di essere breve: \xE8 molto meglio una frase in pi\xF9 che spiega bene, piuttosto che una definizione telegrafica che lo studente non riesce a seguire. Elenca le formule rilevanti con "- ", spiegando ogni simbolo in modo chiaro e comprensibile, con un esempio concreto se aiuta a capire. Se \xE8 utile un disegno esplicativo, includilo come SVG racchiuso tra [DIAGRAMMA_INIZIO] e [DIAGRAMMA_FINE], stile essenziale, solo linee sottili su sfondo trasparente, usando colore currentColor. Dopo le formule aggiungi sempre una sezione "## Esercizio svolto" con un problema breve e concreto su questo argomento, risolto passo per passo: ogni passaggio su una riga separata che inizia con "- ", spiegando con calma, con parole semplici, cosa si fa e perch\xE9 \u2014 come se lo spiegassi a voce a uno studente che ha bisogno di tempo per capire, non come una lista di operazioni. Rispondi solo con il formulario.';
@@ -27592,6 +29019,20 @@ function App() {
   }, []);
   const [flashcardLaunch, setFlashcardLaunch] = useState(null);
   const [lessonNonce, setLessonNonce] = useState(0);
+  const [notesOpen, setNotesOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem("chiarostudio-appunti-aperti") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [notesLoad, setNotesLoad] = useState(null);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("chiarostudio-appunti-aperti", notesOpen ? "1" : "0");
+    } catch {
+    }
+  }, [notesOpen]);
   const [interrAlive, setInterrAlive] = useState(false);
   const [interrInProgress, setInterrInProgress] = useState(false);
   useEffect(() => {
@@ -27649,6 +29090,21 @@ function App() {
     });
     setLessonNonce(Date.now());
     setActive("matematica");
+  };
+  const openSavedNotes = (item) => {
+    setNotesLoad({ item, nonce: Date.now() });
+    setNotesOpen(true);
+  };
+  const openSavedCorrection = (item) => {
+    let data = null;
+    try {
+      data = JSON.parse(item.content);
+    } catch {
+    }
+    if (!data || !data.result) return;
+    setSectionState("correttore", { image: null, thumb: data.thumb || null, materia: data.materia, nota: data.nota || "", status: "result", error: "", result: data.result, mode: data.mode || "direct", items: data.items || {}, savedId: item.id });
+    setLessonNonce(Date.now());
+    setActive("correttore");
   };
   const openFlashcardDeck = (cards) => {
     setFlashcardLaunch({ cards, nonce: Date.now() });
@@ -27878,6 +29334,15 @@ function App() {
     );
   } else if (active === "dizionario") {
     content = /* @__PURE__ */ React.createElement(DizionarioWebScreen, { onSave: addToArchivio });
+  } else if (active === "pomodoro") {
+    content = /* @__PURE__ */ React.createElement(PomodoroScreen, null);
+  } else if (active === "correttore") {
+    content = /* @__PURE__ */ React.createElement(CorrettoreScreen, {
+      key: "correttore-" + lessonNonce,
+      onSave: saveOrUpdateArchivio,
+      initialState: getSectionState("correttore"),
+      onStateChange: (s) => setSectionState("correttore", s)
+    });
   } else if (active === "matematica") {
     content = /* @__PURE__ */ React.createElement(MatematicaScreen, {
       key: "matematica-" + lessonNonce,
@@ -27887,23 +29352,26 @@ function App() {
       onStateChange: (s) => setSectionState("matematica", s)
     });
   } else if (active === "archivio") {
-    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck, onOpenText: openSavedText, onOpenLesson: openSavedLesson });
+    content = /* @__PURE__ */ React.createElement(ArchivioWebScreen, { items: archivio, onDelete: removeFromArchivio, onOpenFlashcards: openFlashcardDeck, onOpenText: openSavedText, onOpenLesson: openSavedLesson, onOpenCorrection: openSavedCorrection, onOpenNotes: openSavedNotes });
   } else if (active === "voce") {
     content = /* @__PURE__ */ React.createElement(VoceScreen, null);
   } else if (active === "segnalazioni") {
     content = /* @__PURE__ */ React.createElement(SegnalazioniScreen, { isAdmin });
   }
-  return /* @__PURE__ */ React.createElement("div", { style: { "--fs": fontScale, display: "flex", minHeight: "100vh", background: C.paper, fontFamily: FONT } }, /* @__PURE__ */ React.createElement("style", null, `
+  return /* @__PURE__ */ React.createElement("div", { className: notesOpen ? "notes-open" : void 0, style: { "--fs": fontScale, display: "flex", minHeight: "100vh", background: C.paper, fontFamily: FONT } }, /* @__PURE__ */ React.createElement("style", null, `
         @keyframes chiaro-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .chiaro-spin { animation: chiaro-spin 1s linear infinite; display: inline-block; }
         .chiaro-balloon-input::placeholder { color: rgba(251,250,244,0.75); }
         * { box-sizing: border-box; }
         body { margin: 0; }
+        ${NOTES_CSS}
+        @media (min-width: 900px) { .notes-open [data-pomo-mini] { right: 396px !important; } }
+        @media (max-width: 899px) { .notes-open [data-pomo-mini] { bottom: calc(52vh + 12px) !important; } }
         .chiaro-content { padding: 34px 40px; }
         @media (max-width: 640px) {
           .chiaro-content { padding: 18px 16px; }
         }
-      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, overflowY: "auto" } }, /* @__PURE__ */ React.createElement(OfflineBanner, { online, offlineMode }), content, interrAlive && !(SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes("interrogazione") && !isSubscribed) && /* @__PURE__ */ React.createElement("div", { style: { display: active === "interrogazione" ? "block" : "none" } }, /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio, visible: active === "interrogazione", onProgressChange: setInterrInProgress })), interrInProgress && active !== "interrogazione" && /* @__PURE__ */ React.createElement(
+      `), active !== "home" && /* @__PURE__ */ React.createElement(Sidebar, { active, onSelect: setActive, fontScale, setFontScale, collapsed, setCollapsed }), /* @__PURE__ */ React.createElement("div", { className: "chiaro-content", style: { flex: 1, minWidth: 0, overflowX: "clip" } }, /* @__PURE__ */ React.createElement(OfflineBanner, { online, offlineMode }), content, active !== "pomodoro" && /* @__PURE__ */ React.createElement(PomodoroMini, { onOpen: () => setActive("pomodoro"), bottom: interrInProgress && active !== "interrogazione" ? 74 : 16 }), active !== "home" && (notesOpen ? /* @__PURE__ */ React.createElement(NotesPanel, { onClose: () => setNotesOpen(false), sectionTitle: (SECTIONS.find((x) => x.id === active) || { title: active === "archivio" ? "Archivio" : "Studio" }).title, archivio, onSave: saveOrUpdateArchivio, loadItem: notesLoad }) : /* @__PURE__ */ React.createElement("button", { className: "chiaro-notes-tab", onClick: () => setNotesOpen(true), "aria-label": "Apri gli appunti" }, "\u{1F4DD} Appunti")), interrAlive && !(SUBSCRIPTION_GATING_ENABLED && PAID_SECTIONS.includes("interrogazione") && !isSubscribed) && /* @__PURE__ */ React.createElement("div", { style: { display: active === "interrogazione" ? "block" : "none" } }, /* @__PURE__ */ React.createElement(InterrogazioneScreen, { onSave: addToArchivio, archivio, visible: active === "interrogazione", onProgressChange: setInterrInProgress })), interrInProgress && active !== "interrogazione" && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setActive("interrogazione"),
